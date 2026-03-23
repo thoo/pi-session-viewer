@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { __private__, sanitizeParam } from "../../server/sessions.ts";
+import { __private__, sanitizeParam } from "../../server/sessions";
 
 describe("server/sessions", () => {
   it("rejects unsafe path params", () => {
@@ -146,6 +146,32 @@ describe("server/sessions", () => {
         label: "Assistant (gpt-4.1)",
         startMs: 4000,
         endMs: 4001,
+        parentId: null,
+        depth: 0,
+      },
+    ]);
+  });
+
+  it("ignores message entries without timestamps when computing spans", () => {
+    const entries = [
+      {
+        type: "message",
+        message: { role: "user", content: [] },
+      },
+      {
+        type: "message",
+        timestamp: "2024-01-01T00:00:02.000Z",
+        message: { role: "assistant", model: "gpt-4.1", content: [] },
+      },
+    ];
+
+    expect(__private__.computeSpans(entries)).toEqual([
+      {
+        id: "span-0",
+        type: "assistant",
+        label: "Assistant (gpt-4.1)",
+        startMs: 0,
+        endMs: 1,
         parentId: null,
         depth: 0,
       },

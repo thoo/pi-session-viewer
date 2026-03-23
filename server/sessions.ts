@@ -109,6 +109,7 @@ type MessageEntry = ParsedSessionEntry & {
   type: "message";
   message: ParsedMessage;
 };
+type TimedMessageEntry = MessageEntry & { timestamp: string };
 
 // --- Metadata cache: keyed by absolute file path, stores (mtime, metadata) ---
 
@@ -195,6 +196,10 @@ function normalizeSearchText(value: string): string {
 
 function isMessageEntry(entry: ParsedSessionEntry): entry is MessageEntry {
   return entry.type === "message" && Boolean(entry.message);
+}
+
+function hasTimestamp(entry: MessageEntry): entry is TimedMessageEntry {
+  return typeof entry.timestamp === "string" && entry.timestamp.length > 0;
 }
 
 function updateTimeRange(
@@ -304,13 +309,13 @@ function aggregateMetadata(
 
 // --- Span computation ---
 
-function getMessageEntries(entries: ParsedSessionEntry[]): MessageEntry[] {
-  return entries.filter(isMessageEntry);
+function getMessageEntries(entries: ParsedSessionEntry[]): TimedMessageEntry[] {
+  return entries.filter(isMessageEntry).filter(hasTimestamp);
 }
 
 function getSessionStart(
   entries: ParsedSessionEntry[],
-  messages: MessageEntry[],
+  messages: TimedMessageEntry[],
 ): number {
   const firstMessageTs = messages[0]?.timestamp;
   if (firstMessageTs) {
@@ -322,7 +327,7 @@ function getSessionStart(
 }
 
 function buildToolResultTimestamps(
-  messages: MessageEntry[],
+  messages: TimedMessageEntry[],
   toMs: (timestamp: string) => number,
 ): Map<string, number> {
   const timestamps = new Map<string, number>();
@@ -338,7 +343,7 @@ function buildToolResultTimestamps(
 }
 
 function createUserSpan(
-  messages: MessageEntry[],
+  messages: TimedMessageEntry[],
   index: number,
   nextSpanId: () => string,
   toMs: (timestamp: string) => number,
@@ -394,7 +399,7 @@ function collectAssistantToolSpans(
 }
 
 function consumeToolResponses(
-  messages: MessageEntry[],
+  messages: TimedMessageEntry[],
   startIndex: number,
   currentEndMs: number,
   toMs: (timestamp: string) => number,
@@ -419,7 +424,7 @@ function consumeToolResponses(
 }
 
 function createAssistantSpan(
-  entry: MessageEntry,
+  entry: TimedMessageEntry,
   assistantSpanId: string,
   assistantStartMs: number,
   assistantEndMs: number,

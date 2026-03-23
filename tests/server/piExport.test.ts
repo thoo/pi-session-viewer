@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { __private__ } from "../../server/piExport.ts";
+import { __private__ } from "../../server/piExport";
 
 describe("server/piExport", () => {
   it("converts ANSI palette values to hex", () => {
