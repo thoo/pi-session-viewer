@@ -3,6 +3,7 @@ import { readdir, readFile, stat, mkdir } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { existsSync } from "node:fs";
+import { z } from "zod";
 import { exportSessionHtml, getThemeCacheToken } from "./piExport.js";
 
 const SESSIONS_DIR = join(homedir(), ".pi", "agent", "sessions");
@@ -58,6 +59,57 @@ export interface TraceSpan {
   depth: number;
 }
 
+const contentBlockSchema = z
+  .object({
+    type: z.string().optional(),
+    id: z.string().optional(),
+    name: z.string().optional(),
+  })
+  .passthrough();
+
+const messageUsageSchema = z
+  .object({
+    input: z.number().optional(),
+    output: z.number().optional(),
+    cacheRead: z.number().optional(),
+    cacheWrite: z.number().optional(),
+    cost: z
+      .object({
+        total: z.number().optional(),
+      })
+      .passthrough()
+      .optional(),
+  })
+  .passthrough();
+
+const messageSchema = z
+  .object({
+    role: z.string().optional(),
+    model: z.string().optional(),
+    toolCallId: z.string().optional(),
+    usage: messageUsageSchema.optional(),
+    content: z.array(contentBlockSchema).optional(),
+  })
+  .passthrough();
+
+const sessionEntrySchema = z
+  .object({
+    type: z.string().optional(),
+    timestamp: z.string().optional(),
+    modelId: z.string().optional(),
+    cwd: z.string().optional(),
+    message: messageSchema.optional(),
+  })
+  .passthrough();
+
+type ParsedContentBlock = z.infer<typeof contentBlockSchema>;
+type ParsedMessage = z.infer<typeof messageSchema>;
+type ParsedSessionEntry = z.infer<typeof sessionEntrySchema>;
+type MessageEntry = ParsedSessionEntry & {
+  type: "message";
+  message: ParsedMessage;
+};
+
 // --- Metadata cache: keyed by absolute file path, stores (mtime, metadata) ---
 
 const metadataCache = new Map<
@@ -98,17 +150,29 @@ function resolveSessionFile(dirName: string, filename: string): string | null {
 
 // --- JSONL parsing ---
 
-function parseJsonlLines(content: string): any[] {
-  const results: any[] = [];
+function parseSessionEntry(line: string): ParsedSessionEntry | null {
+  try {
+    const parsed = JSON.parse(line) as unknown;
+    const result = sessionEntrySchema.safeParse(parsed);
+    return result.success ? result.data : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseJsonlLines(content: string): ParsedSessionEntry[] {
+  const results: ParsedSessionEntry[] = [];
+
   for (const line of content.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed) continue;
-    try {
-      results.push(JSON.parse(trimmed));
-    } catch {
-      // Skip malformed lines (partial writes, active sessions)
+
+    const entry = parseSessionEntry(trimmed);
+    if (entry) {
+      results.push(entry);
     }
   }
+
   return results;
 }
 
@@ -116,19 +180,21 @@ function readCwdFromHeader(content: string): string | null {
   const firstNewline = content.indexOf("\n");
   const firstLine =
     firstNewline === -1 ? content : content.slice(0, firstNewline);
-  try {
-    const header = JSON.parse(firstLine.trim());
-    if (header.type === "session" && header.cwd) {
-      return header.cwd;
-    }
-  } catch {
-    // ignore
+  const header = parseSessionEntry(firstLine.trim());
+
+  if (header?.type === "session" && header.cwd) {
+    return header.cwd;
   }
+
   return null;
 }
 
 function normalizeSearchText(value: string): string {
   return value.trim().toLowerCase();
+}
+
+function isMessageEntry(entry: ParsedSessionEntry): entry is MessageEntry {
+  return entry.type === "message" && Boolean(entry.message);
 }
 
 function updateTimeRange(
@@ -145,19 +211,19 @@ function updateTimeRange(
   };
 }
 
-function countAssistantToolCalls(content: unknown): number {
-  if (!Array.isArray(content)) {
+function countAssistantToolCalls(
+  content: ParsedContentBlock[] | undefined,
+): number {
+  if (!content) {
     return 0;
   }
 
   return content.reduce((count, block) => {
-    return block && typeof block === "object" && block.type === "toolCall"
-      ? count + 1
-      : count;
+    return block.type === "toolCall" ? count + 1 : count;
   }, 0);
 }
 
-function collectAssistantUsageTotals(message: any): {
+function collectAssistantUsageTotals(message: ParsedMessage): {
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
@@ -165,20 +231,23 @@ function collectAssistantUsageTotals(message: any): {
   totalCost: number;
   toolCalls: number;
 } {
-  const usage = message.usage || {};
-  const cost = usage.cost || {};
+  const usage = message.usage;
+  const cost = usage?.cost;
 
   return {
-    inputTokens: usage.input || 0,
-    outputTokens: usage.output || 0,
-    cacheReadTokens: usage.cacheRead || 0,
-    cacheWriteTokens: usage.cacheWrite || 0,
-    totalCost: cost.total || 0,
+    inputTokens: usage?.input ?? 0,
+    outputTokens: usage?.output ?? 0,
+    cacheReadTokens: usage?.cacheRead ?? 0,
+    cacheWriteTokens: usage?.cacheWrite ?? 0,
+    totalCost: cost?.total ?? 0,
     toolCalls: countAssistantToolCalls(message.content),
   };
 }
 
-function aggregateMetadata(entries: any[], filename: string): SessionMetadata {
+function aggregateMetadata(
+  entries: ParsedSessionEntry[],
+  filename: string,
+): SessionMetadata {
   let timeRange = { first: null as string | null, last: null as string | null };
   let inputTokens = 0;
   let outputTokens = 0;
@@ -235,11 +304,14 @@ function aggregateMetadata(entries: any[], filename: string): SessionMetadata {
 
 // --- Span computation ---
 
-function getMessageEntries(entries: any[]): any[] {
-  return entries.filter((entry) => entry.type === "message" && entry.message);
+function getMessageEntries(entries: ParsedSessionEntry[]): MessageEntry[] {
+  return entries.filter(isMessageEntry);
 }
 
-function getSessionStart(entries: any[], messages: any[]): number {
+function getSessionStart(
+  entries: ParsedSessionEntry[],
+  messages: MessageEntry[],
+): number {
   const firstMessageTs = messages[0]?.timestamp;
   if (firstMessageTs) {
     return new Date(firstMessageTs).getTime();
@@ -250,7 +322,7 @@ function getSessionStart(entries: any[], messages: any[]): number {
 }
 
 function buildToolResultTimestamps(
-  messages: any[],
+  messages: MessageEntry[],
   toMs: (timestamp: string) => number,
 ): Map<string, number> {
   const timestamps = new Map<string, number>();
@@ -266,7 +338,7 @@ function buildToolResultTimestamps(
 }
 
 function createUserSpan(
-  messages: any[],
+  messages: MessageEntry[],
   index: number,
   nextSpanId: () => string,
   toMs: (timestamp: string) => number,
@@ -291,7 +363,7 @@ function createUserSpan(
 }
 
 function collectAssistantToolSpans(
-  message: any,
+  message: ParsedMessage,
   assistantSpanId: string,
   assistantStartMs: number,
   toolResultTimestamps: Map<string, number>,
@@ -322,7 +394,7 @@ function collectAssistantToolSpans(
 }
 
 function consumeToolResponses(
-  messages: any[],
+  messages: MessageEntry[],
   startIndex: number,
   currentEndMs: number,
   toMs: (timestamp: string) => number,
@@ -347,7 +419,7 @@ function consumeToolResponses(
 }
 
 function createAssistantSpan(
-  entry: any,
+  entry: MessageEntry,
   assistantSpanId: string,
   assistantStartMs: number,
   assistantEndMs: number,
@@ -367,7 +439,7 @@ function createAssistantSpan(
   };
 }
 
-function computeSpans(entries: any[]): TraceSpan[] {
+function computeSpans(entries: ParsedSessionEntry[]): TraceSpan[] {
   const spans: TraceSpan[] = [];
   const messages = getMessageEntries(entries);
   const sessionStart = getSessionStart(entries, messages);

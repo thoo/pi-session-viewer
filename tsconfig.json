@@ -13,6 +13,7 @@
   "include": [
     "server/**/*",
     "client/src/**/*",
+    "client/vite.config.ts",
     "tests/**/*",
     "vitest.config.ts"
   ],

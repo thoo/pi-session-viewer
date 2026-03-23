@@ -34,6 +34,19 @@ function sendInternalError(
   res.status(500).json({ error: getErrorMessage(error) });
 }
 
+function getQueryString(value: unknown): string {
+  if (typeof value === "string") {
+    return value.trim();
+  }
+
+  if (Array.isArray(value)) {
+    const firstString = value.find((item) => typeof item === "string");
+    return typeof firstString === "string" ? firstString.trim() : "";
+  }
+
+  return "";
+}
+
 app.get("/api/projects", async (_req, res) => {
   try {
     const projects = await scanProjects();
@@ -44,7 +57,7 @@ app.get("/api/projects", async (_req, res) => {
 });
 
 app.get("/api/search", async (req, res) => {
-  const query = String(req.query.q ?? "").trim();
+  const query = getQueryString(req.query.q);
 
   if (!query) {
     res.json([]);
