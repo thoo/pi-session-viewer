@@ -91,16 +91,6 @@ function injectThemeIntoHtml(html: string): string {
   return EXPORT_THEME_CSS + html;
 }
 
-function formatProjectInfo(raw: string) {
-  const decoded = decodeURIComponent(raw);
-  const normalized = decoded.replace(/^--/, "").replace(/--$/, "").replace(/--/g, "/");
-  const parts = normalized.split("/").filter(Boolean);
-  return {
-    title: parts[parts.length - 1] || normalized,
-    detail: normalized,
-  };
-}
-
 function getSessionIdentity(filename: string) {
   const decoded = decodeURIComponent(filename);
   const base = decoded.replace(/\.jsonl$/, "");
@@ -139,17 +129,6 @@ function formatTimestamp(ts: string): string {
   } catch {
     return ts;
   }
-}
-
-function formatTraceDuration(ms: number) {
-  if (ms <= 0) return "0s";
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
-  const minutes = Math.floor(ms / 60_000);
-  const seconds = Math.round((ms % 60_000) / 1000);
-  if (minutes < 60) return `${minutes}m ${seconds}s`;
-  const hours = Math.floor(minutes / 60);
-  return `${hours}h ${minutes % 60}m`;
 }
 
 export function SessionView() {
@@ -233,15 +212,22 @@ export function SessionView() {
 
   const traceStats = useMemo(() => {
     const toolSpans = spans.filter((span) => span.type === "tool").length;
-    const assistantSpans = spans.filter((span) => span.type === "assistant").length;
-    const userTurns = spans.filter((span) => span.depth === 0 && span.type === "user").length;
-    const totalMs = spans.length > 0 ? Math.max(...spans.map((span) => span.endMs), 0) : 0;
+    const assistantSpans = spans.filter(
+      (span) => span.type === "assistant",
+    ).length;
+    const userTurns = spans.filter(
+      (span) => span.depth === 0 && span.type === "user",
+    ).length;
+    const totalMs =
+      spans.length > 0 ? Math.max(...spans.map((span) => span.endMs), 0) : 0;
     return { toolSpans, assistantSpans, userTurns, totalMs };
   }, [spans]);
 
   return (
     <div className="container page-stack session-page">
-      <div className={`session-layout ${traceVisible ? "" : "session-layout-full"}`}>
+      <div
+        className={`session-layout ${traceVisible ? "" : "session-layout-full"}`}
+      >
         {traceVisible && (
           <section className="panel-card trace-panel">
             <div className="panel-body panel-body-trace">
@@ -257,20 +243,42 @@ export function SessionView() {
         <section className="panel-card export-panel">
           <div className="panel-header transcript-toolbar">
             <div className="transcript-toolbar-main">
-              <span className="panel-title mono-text transcript-toolbar-id">{session.shortId}</span>
-              {metaLoading && <span className="session-hero-metric loading-pulse">Loading metadata…</span>}
+              <span className="panel-title mono-text transcript-toolbar-id">
+                {session.shortId}
+              </span>
+              {metaLoading && (
+                <span className="session-hero-metric loading-pulse">
+                  Loading metadata…
+                </span>
+              )}
               {sessionMeta && (
                 <>
-                  <span className="session-hero-metric">{formatTimestamp(sessionMeta.timestamp)}</span>
-                  <span className="session-hero-metric">{formatDuration(sessionMeta.durationSeconds)}</span>
                   <span className="session-hero-metric">
-                    {formatTokens(sessionMeta.inputTokens + sessionMeta.outputTokens)} tokens
+                    {formatTimestamp(sessionMeta.timestamp)}
                   </span>
-                  <span className="session-hero-metric">{sessionMeta.toolCalls} tools</span>
+                  <span className="session-hero-metric">
+                    {formatDuration(sessionMeta.durationSeconds)}
+                  </span>
+                  <span className="session-hero-metric">
+                    {formatTokens(
+                      sessionMeta.inputTokens + sessionMeta.outputTokens,
+                    )}{" "}
+                    tokens
+                  </span>
+                  <span className="session-hero-metric">
+                    {sessionMeta.toolCalls} tools
+                  </span>
                 </>
               )}
+              {metaError && (
+                <span className="session-hero-metric" role="status">
+                  Metadata unavailable
+                </span>
+              )}
               {!spansLoading && spans.length > 0 && (
-                <span className="session-hero-metric">{traceStats.userTurns} turns</span>
+                <span className="session-hero-metric">
+                  {traceStats.userTurns} turns
+                </span>
               )}
             </div>
 
@@ -283,7 +291,12 @@ export function SessionView() {
                 {traceVisible ? "Hide trace" : "Show trace"}
               </button>
               {exportUrl && (
-                <a className="btn btn-sm" href={exportUrl} target="_blank" rel="noreferrer">
+                <a
+                  className="btn btn-sm"
+                  href={exportUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
                   Open in new tab
                 </a>
               )}

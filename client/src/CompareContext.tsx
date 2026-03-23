@@ -58,7 +58,8 @@ export function CompareProvider({ children }: { children: ReactNode }) {
   const value = useMemo<CompareContextValue>(() => {
     return {
       selected,
-      isSelected: (session) => selected.some((item) => sameSession(item, session)),
+      isSelected: (session) =>
+        selected.some((item) => sameSession(item, session)),
       toggleSelection: (session) => {
         setSelected((current) => {
           const exists = current.some((item) => sameSession(item, session));
@@ -72,14 +73,18 @@ export function CompareProvider({ children }: { children: ReactNode }) {
         });
       },
       removeSelection: (session) => {
-        setSelected((current) => current.filter((item) => !sameSession(item, session)));
+        setSelected((current) =>
+          current.filter((item) => !sameSession(item, session)),
+        );
       },
       clearSelection: () => setSelected([]),
       readyToCompare: selected.length === 2,
     };
   }, [selected]);
 
-  return <CompareContext.Provider value={value}>{children}</CompareContext.Provider>;
+  return (
+    <CompareContext.Provider value={value}>{children}</CompareContext.Provider>
+  );
 }
 
 export function useCompare() {

@@ -44,7 +44,10 @@ function PiIcon() {
 
 function formatProjectLabel(raw: string) {
   const decoded = decodeURIComponent(raw);
-  const normalized = decoded.replace(/^--/, "").replace(/--$/, "").replace(/--/g, "/");
+  const normalized = decoded
+    .replace(/^--/, "")
+    .replace(/--$/, "")
+    .replace(/--/g, "/");
   const parts = normalized.split("/").filter(Boolean);
   return {
     title: parts[parts.length - 1] || normalized,
@@ -80,7 +83,9 @@ function Header() {
           </div>
           <div className="header-copy">
             <span className="header-kicker">Pi Session Viewer</span>
-            <span className="header-title">Explore traces, costs, exports, and comparisons</span>
+            <span className="header-title">
+              Explore traces, costs, exports, and comparisons
+            </span>
           </div>
         </Link>
 
@@ -122,7 +127,10 @@ function Header() {
           )}
 
           {isComparePage && selected.length > 0 && (
-            <button className="header-compare header-compare-button" onClick={clearSelection}>
+            <button
+              className="header-compare header-compare-button"
+              onClick={clearSelection}
+            >
               <span>Clear</span>
             </button>
           )}

@@ -7,7 +7,12 @@ import { exportSessionHtml, getThemeCacheToken } from "./piExport.js";
 
 const SESSIONS_DIR = join(homedir(), ".pi", "agent", "sessions");
 const CACHE_DIR = join(homedir(), ".pi-session-viewer-cache");
-const THEME_FILE = resolve(import.meta.dirname, "..", "themes", "tokyo-night.json");
+const THEME_FILE = resolve(
+  import.meta.dirname,
+  "..",
+  "themes",
+  "tokyo-night.json",
+);
 
 // --- Types ---
 
@@ -60,10 +65,7 @@ const metadataCache = new Map<
   { mtimeMs: number; metadata: SessionMetadata }
 >();
 
-const spanCache = new Map<
-  string,
-  { mtimeMs: number; spans: TraceSpan[] }
->();
+const spanCache = new Map<string, { mtimeMs: number; spans: TraceSpan[] }>();
 
 const exportInflight = new Map<string, Promise<string>>();
 
@@ -112,7 +114,8 @@ function parseJsonlLines(content: string): any[] {
 
 function readCwdFromHeader(content: string): string | null {
   const firstNewline = content.indexOf("\n");
-  const firstLine = firstNewline === -1 ? content : content.slice(0, firstNewline);
+  const firstLine =
+    firstNewline === -1 ? content : content.slice(0, firstNewline);
   try {
     const header = JSON.parse(firstLine.trim());
     if (header.type === "session" && header.cwd) {
@@ -128,12 +131,55 @@ function normalizeSearchText(value: string): string {
   return value.trim().toLowerCase();
 }
 
-function aggregateMetadata(
-  entries: any[],
-  filename: string
-): SessionMetadata {
-  let firstTimestamp: string | null = null;
-  let lastTimestamp: string | null = null;
+function updateTimeRange(
+  timestamp: string | undefined,
+  current: { first: string | null; last: string | null },
+): { first: string | null; last: string | null } {
+  if (!timestamp) {
+    return current;
+  }
+
+  return {
+    first: current.first ?? timestamp,
+    last: timestamp,
+  };
+}
+
+function countAssistantToolCalls(content: unknown): number {
+  if (!Array.isArray(content)) {
+    return 0;
+  }
+
+  return content.reduce((count, block) => {
+    return block && typeof block === "object" && block.type === "toolCall"
+      ? count + 1
+      : count;
+  }, 0);
+}
+
+function collectAssistantUsageTotals(message: any): {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  totalCost: number;
+  toolCalls: number;
+} {
+  const usage = message.usage || {};
+  const cost = usage.cost || {};
+
+  return {
+    inputTokens: usage.input || 0,
+    outputTokens: usage.output || 0,
+    cacheReadTokens: usage.cacheRead || 0,
+    cacheWriteTokens: usage.cacheWrite || 0,
+    totalCost: cost.total || 0,
+    toolCalls: countAssistantToolCalls(message.content),
+  };
+}
+
+function aggregateMetadata(entries: any[], filename: string): SessionMetadata {
+  let timeRange = { first: null as string | null, last: null as string | null };
   let inputTokens = 0;
   let outputTokens = 0;
   let cacheReadTokens = 0;
@@ -144,49 +190,37 @@ function aggregateMetadata(
   const models = new Set<string>();
 
   for (const entry of entries) {
-    const ts = entry.timestamp;
-    if (ts) {
-      if (!firstTimestamp) firstTimestamp = ts;
-      lastTimestamp = ts;
-    }
+    timeRange = updateTimeRange(entry.timestamp, timeRange);
 
     if (entry.type === "model_change" && entry.modelId) {
       models.add(entry.modelId);
     }
 
-    if (entry.type === "message") {
-      messageCount++;
-      const msg = entry.message;
-      if (!msg) continue;
-
-      if (msg.role === "assistant") {
-        const usage = msg.usage || {};
-        inputTokens += usage.input || 0;
-        outputTokens += usage.output || 0;
-        cacheReadTokens += usage.cacheRead || 0;
-        cacheWriteTokens += usage.cacheWrite || 0;
-        const cost = usage.cost || {};
-        totalCost += cost.total || 0;
-
-        const content = msg.content || [];
-        for (const block of content) {
-          if (block && block.type === "toolCall") {
-            toolCalls++;
-          }
-        }
-      }
+    if (entry.type !== "message") {
+      continue;
     }
+
+    messageCount++;
+    if (!entry.message || entry.message.role !== "assistant") {
+      continue;
+    }
+
+    const totals = collectAssistantUsageTotals(entry.message);
+    inputTokens += totals.inputTokens;
+    outputTokens += totals.outputTokens;
+    cacheReadTokens += totals.cacheReadTokens;
+    cacheWriteTokens += totals.cacheWriteTokens;
+    totalCost += totals.totalCost;
+    toolCalls += totals.toolCalls;
   }
 
-  const startTime = firstTimestamp ? new Date(firstTimestamp).getTime() : 0;
-  const endTime = lastTimestamp ? new Date(lastTimestamp).getTime() : 0;
+  const startTime = timeRange.first ? new Date(timeRange.first).getTime() : 0;
+  const endTime = timeRange.last ? new Date(timeRange.last).getTime() : 0;
   const durationSeconds = Math.round((endTime - startTime) / 1000);
-
-  const sessionTimestamp = firstTimestamp || "";
 
   return {
     filename,
-    timestamp: sessionTimestamp,
+    timestamp: timeRange.first || "",
     durationSeconds,
     models: [...models],
     inputTokens,
@@ -201,114 +235,191 @@ function aggregateMetadata(
 
 // --- Span computation ---
 
-function computeSpans(entries: any[]): TraceSpan[] {
-  const spans: TraceSpan[] = [];
-  let spanIdx = 0;
+function getMessageEntries(entries: any[]): any[] {
+  return entries.filter((entry) => entry.type === "message" && entry.message);
+}
 
-  const messages = entries.filter((e) => e.type === "message" && e.message);
-
+function getSessionStart(entries: any[], messages: any[]): number {
   const firstMessageTs = messages[0]?.timestamp;
-  const sessionStart = firstMessageTs
-    ? new Date(firstMessageTs).getTime()
-    : (entries[0]?.timestamp ? new Date(entries[0].timestamp).getTime() : 0);
-
-  function toMs(ts: string): number {
-    return new Date(ts).getTime() - sessionStart;
+  if (firstMessageTs) {
+    return new Date(firstMessageTs).getTime();
   }
 
-  const toolResultTimestamps = new Map<string, number>();
+  const firstEntryTs = entries[0]?.timestamp;
+  return firstEntryTs ? new Date(firstEntryTs).getTime() : 0;
+}
+
+function buildToolResultTimestamps(
+  messages: any[],
+  toMs: (timestamp: string) => number,
+): Map<string, number> {
+  const timestamps = new Map<string, number>();
+
   for (const entry of messages) {
     const msg = entry.message;
     if (msg.role === "toolResult" && msg.toolCallId) {
-      toolResultTimestamps.set(msg.toolCallId, toMs(entry.timestamp));
+      timestamps.set(msg.toolCallId, toMs(entry.timestamp));
     }
   }
 
-  let i = 0;
-  while (i < messages.length) {
-    const entry = messages[i];
-    const msg = entry.message;
+  return timestamps;
+}
 
-    if (msg.role === "user") {
-      const startMs = toMs(entry.timestamp);
-      let endMs = startMs;
+function createUserSpan(
+  messages: any[],
+  index: number,
+  nextSpanId: () => string,
+  toMs: (timestamp: string) => number,
+): TraceSpan {
+  const entry = messages[index];
+  const startMs = toMs(entry.timestamp);
+  const nextMessage = messages[index + 1];
+  const endMs =
+    nextMessage?.message.role === "assistant"
+      ? toMs(nextMessage.timestamp)
+      : startMs;
 
-      if (i + 1 < messages.length && messages[i + 1].message.role === "assistant") {
-        endMs = toMs(messages[i + 1].timestamp);
-      }
+  return {
+    id: nextSpanId(),
+    type: "user",
+    label: "User",
+    startMs,
+    endMs: Math.max(endMs, startMs + 1),
+    parentId: null,
+    depth: 0,
+  };
+}
 
-      spans.push({
-        id: `span-${spanIdx++}`,
-        type: "user",
-        label: "User",
-        startMs,
-        endMs: Math.max(endMs, startMs + 1),
-        parentId: null,
-        depth: 0,
-      });
-      i++;
+function collectAssistantToolSpans(
+  message: any,
+  assistantSpanId: string,
+  assistantStartMs: number,
+  toolResultTimestamps: Map<string, number>,
+  nextSpanId: () => string,
+): { toolSpans: TraceSpan[]; assistantEndMs: number } {
+  let assistantEndMs = assistantStartMs;
+  const toolSpans: TraceSpan[] = [];
+
+  for (const block of message.content || []) {
+    if (!block || block.type !== "toolCall" || !block.id) {
       continue;
     }
 
-    if (msg.role === "assistant") {
-      const assistantStartMs = toMs(entry.timestamp);
+    const toolEndMs = toolResultTimestamps.get(block.id) ?? assistantStartMs;
+    assistantEndMs = Math.max(assistantEndMs, toolEndMs);
+    toolSpans.push({
+      id: nextSpanId(),
+      type: "tool",
+      label: block.name || "tool",
+      startMs: assistantStartMs,
+      endMs: Math.max(toolEndMs, assistantStartMs + 1),
+      parentId: assistantSpanId,
+      depth: 1,
+    });
+  }
 
-      let assistantEndMs = assistantStartMs;
-      const toolSpans: TraceSpan[] = [];
-      const assistantSpanId = `span-${spanIdx++}`;
+  return { toolSpans, assistantEndMs };
+}
 
-      const content = msg.content || [];
-      for (const block of content) {
-        if (block && block.type === "toolCall" && block.id) {
-          const toolStartMs = assistantStartMs;
-          const toolEndMs = toolResultTimestamps.get(block.id) ?? assistantStartMs;
-          if (toolEndMs > assistantEndMs) assistantEndMs = toolEndMs;
+function consumeToolResponses(
+  messages: any[],
+  startIndex: number,
+  currentEndMs: number,
+  toMs: (timestamp: string) => number,
+): { nextIndex: number; assistantEndMs: number } {
+  let nextIndex = startIndex;
+  let assistantEndMs = currentEndMs;
 
-          toolSpans.push({
-            id: `span-${spanIdx++}`,
-            type: "tool",
-            label: block.name || "tool",
-            startMs: toolStartMs,
-            endMs: Math.max(toolEndMs, toolStartMs + 1),
-            parentId: assistantSpanId,
-            depth: 1,
-          });
-        }
-      }
+  while (nextIndex < messages.length) {
+    const role = messages[nextIndex].message.role;
+    if (role !== "toolResult" && role !== "bashExecution") {
+      break;
+    }
 
-      let j = i + 1;
-      while (j < messages.length) {
-        const nextMsg = messages[j].message;
-        if (nextMsg.role === "toolResult" || nextMsg.role === "bashExecution") {
-          const ts = toMs(messages[j].timestamp);
-          if (ts > assistantEndMs) assistantEndMs = ts;
-          j++;
-        } else {
-          break;
-        }
-      }
+    assistantEndMs = Math.max(
+      assistantEndMs,
+      toMs(messages[nextIndex].timestamp),
+    );
+    nextIndex++;
+  }
 
-      const modelLabel = msg.model
-        ? `Assistant (${msg.model})`
-        : "Assistant";
+  return { nextIndex, assistantEndMs };
+}
 
-      spans.push({
-        id: assistantSpanId,
-        type: "assistant",
-        label: modelLabel,
-        startMs: assistantStartMs,
-        endMs: Math.max(assistantEndMs, assistantStartMs + 1),
-        parentId: null,
-        depth: 0,
-      });
+function createAssistantSpan(
+  entry: any,
+  assistantSpanId: string,
+  assistantStartMs: number,
+  assistantEndMs: number,
+): TraceSpan {
+  const label = entry.message.model
+    ? `Assistant (${entry.message.model})`
+    : "Assistant";
 
-      spans.push(...toolSpans);
+  return {
+    id: assistantSpanId,
+    type: "assistant",
+    label,
+    startMs: assistantStartMs,
+    endMs: Math.max(assistantEndMs, assistantStartMs + 1),
+    parentId: null,
+    depth: 0,
+  };
+}
 
-      i = j;
+function computeSpans(entries: any[]): TraceSpan[] {
+  const spans: TraceSpan[] = [];
+  const messages = getMessageEntries(entries);
+  const sessionStart = getSessionStart(entries, messages);
+  const toMs = (timestamp: string) =>
+    new Date(timestamp).getTime() - sessionStart;
+  const toolResultTimestamps = buildToolResultTimestamps(messages, toMs);
+
+  let spanIdx = 0;
+  const nextSpanId = () => `span-${spanIdx++}`;
+
+  let index = 0;
+  while (index < messages.length) {
+    const entry = messages[index];
+    const role = entry.message.role;
+
+    if (role === "user") {
+      spans.push(createUserSpan(messages, index, nextSpanId, toMs));
+      index++;
       continue;
     }
 
-    i++;
+    if (role !== "assistant") {
+      index++;
+      continue;
+    }
+
+    const assistantStartMs = toMs(entry.timestamp);
+    const assistantSpanId = nextSpanId();
+    const { toolSpans, assistantEndMs: toolEndMs } = collectAssistantToolSpans(
+      entry.message,
+      assistantSpanId,
+      assistantStartMs,
+      toolResultTimestamps,
+      nextSpanId,
+    );
+    const { nextIndex, assistantEndMs } = consumeToolResponses(
+      messages,
+      index + 1,
+      toolEndMs,
+      toMs,
+    );
+
+    spans.push(
+      createAssistantSpan(
+        entry,
+        assistantSpanId,
+        assistantStartMs,
+        assistantEndMs,
+      ),
+    );
+    spans.push(...toolSpans);
+    index = nextIndex;
   }
 
   return spans;
@@ -354,7 +465,7 @@ export async function scanProjects(): Promise<ProjectInfo[]> {
 }
 
 export async function searchProjectsAndSessions(
-  query: string
+  query: string,
 ): Promise<ProjectSearchResult[]> {
   const normalizedQuery = normalizeSearchText(query);
   if (!normalizedQuery) {
@@ -367,7 +478,7 @@ export async function searchProjectsAndSessions(
   for (const project of projects) {
     const projectLabel = basename(project.displayPath) || project.displayPath;
     const projectMatches = normalizeSearchText(
-      `${project.displayPath}\n${project.dirName}\n${projectLabel}`
+      `${project.displayPath}\n${project.dirName}\n${projectLabel}`,
     ).includes(normalizedQuery);
 
     const dirPath = resolveSessionDir(project.dirName);
@@ -380,12 +491,15 @@ export async function searchProjectsAndSessions(
     for (const filename of jsonlFiles) {
       const baseName = filename.replace(/\.jsonl$/, "");
       const sessionMatches = normalizeSearchText(
-        `${filename}\n${baseName}`
+        `${filename}\n${baseName}`,
       ).includes(normalizedQuery);
 
       if (!sessionMatches) continue;
 
-      const metadata = await readSessionMetadata(join(dirPath, filename), filename);
+      const metadata = await readSessionMetadata(
+        join(dirPath, filename),
+        filename,
+      );
       matchingSessions.push({
         filename,
         timestamp: metadata?.timestamp ?? "",
@@ -394,7 +508,8 @@ export async function searchProjectsAndSessions(
     }
 
     matchingSessions.sort((a, b) => {
-      const timeDiff = new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
+      const timeDiff =
+        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
       if (Number.isFinite(timeDiff) && timeDiff !== 0) return timeDiff;
       return a.filename.localeCompare(b.filename);
     });
@@ -422,7 +537,10 @@ export async function searchProjectsAndSessions(
   });
 }
 
-async function readSessionMetadata(filePath: string, filename: string): Promise<SessionMetadata | null> {
+async function readSessionMetadata(
+  filePath: string,
+  filename: string,
+): Promise<SessionMetadata | null> {
   try {
     const fileStat = await stat(filePath);
     const cached = metadataCache.get(filePath);
@@ -447,7 +565,7 @@ async function readSessionMetadata(filePath: string, filename: string): Promise<
 }
 
 export async function getSessionsForProject(
-  dirName: string
+  dirName: string,
 ): Promise<SessionMetadata[] | null> {
   const dirPath = resolveSessionDir(dirName);
   if (!dirPath || !existsSync(dirPath)) return null;
@@ -466,13 +584,13 @@ export async function getSessionsForProject(
   }
 
   return results.sort(
-    (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
   );
 }
 
 export async function getSessionMetadata(
   dirName: string,
-  filename: string
+  filename: string,
 ): Promise<SessionMetadata | null> {
   const filePath = resolveSessionFile(dirName, filename);
   if (!filePath || !existsSync(filePath)) return null;
@@ -481,7 +599,7 @@ export async function getSessionMetadata(
 
 export async function getSessionSpans(
   dirName: string,
-  filename: string
+  filename: string,
 ): Promise<TraceSpan[] | null> {
   const filePath = resolveSessionFile(dirName, filename);
   if (!filePath || !existsSync(filePath)) return null;
@@ -507,7 +625,7 @@ export async function getSessionSpans(
 
 export async function exportSession(
   dirName: string,
-  filename: string
+  filename: string,
 ): Promise<string | null> {
   const filePath = resolveSessionFile(dirName, filename);
   if (!filePath || !existsSync(filePath)) return null;
@@ -549,3 +667,11 @@ export async function exportSession(
   exportInflight.set(cachedHtml, exportPromise);
   return exportPromise;
 }
+
+export const __private__ = {
+  aggregateMetadata,
+  computeSpans,
+  normalizeSearchText,
+  parseJsonlLines,
+  readCwdFromHeader,
+};

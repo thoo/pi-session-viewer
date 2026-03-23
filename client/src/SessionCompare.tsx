@@ -70,7 +70,10 @@ function injectThemeIntoHtml(html: string): string {
 
 function formatProjectInfo(raw: string) {
   const decoded = decodeURIComponent(raw);
-  const normalized = decoded.replace(/^--/, "").replace(/--$/, "").replace(/--/g, "/");
+  const normalized = decoded
+    .replace(/^--/, "")
+    .replace(/--$/, "")
+    .replace(/--/g, "/");
   const parts = normalized.split("/").filter(Boolean);
   return {
     title: parts[parts.length - 1] || normalized,
@@ -145,7 +148,10 @@ export function SessionCompare() {
       {readyToCompare && (
         <div className="compare-grid">
           {selected.slice(0, 2).map((session) => (
-            <ComparePane key={`${session.dirName}:${session.filename}`} session={session} />
+            <ComparePane
+              key={`${session.dirName}:${session.filename}`}
+              session={session}
+            />
           ))}
         </div>
       )}
@@ -168,8 +174,14 @@ function ComparePane({ session }: { session: CompareSessionRef }) {
   const [exportLoading, setExportLoading] = useState(true);
   const [exportError, setExportError] = useState<string | null>(null);
 
-  const project = useMemo(() => formatProjectInfo(session.dirName), [session.dirName]);
-  const identity = useMemo(() => getSessionIdentity(session.filename), [session.filename]);
+  const project = useMemo(
+    () => formatProjectInfo(session.dirName),
+    [session.dirName],
+  );
+  const identity = useMemo(
+    () => getSessionIdentity(session.filename),
+    [session.filename],
+  );
   const apiBase = `/api/projects/${encodeURIComponent(session.dirName)}/sessions/${encodeURIComponent(session.filename)}`;
 
   useEffect(() => {
@@ -181,7 +193,8 @@ function ComparePane({ session }: { session: CompareSessionRef }) {
         return r.json();
       })
       .then((items: SessionMeta[]) => {
-        const match = items.find((item) => item.filename === session.filename) ?? null;
+        const match =
+          items.find((item) => item.filename === session.filename) ?? null;
         if (!match) throw new Error("Session metadata not found");
         setMeta(match);
       })
@@ -230,9 +243,14 @@ function ComparePane({ session }: { session: CompareSessionRef }) {
 
   const traceStats = useMemo(() => {
     const toolSpans = spans.filter((span) => span.type === "tool").length;
-    const assistantSpans = spans.filter((span) => span.type === "assistant").length;
-    const userTurns = spans.filter((span) => span.depth === 0 && span.type === "user").length;
-    const totalMs = spans.length > 0 ? Math.max(...spans.map((span) => span.endMs), 0) : 0;
+    const assistantSpans = spans.filter(
+      (span) => span.type === "assistant",
+    ).length;
+    const userTurns = spans.filter(
+      (span) => span.depth === 0 && span.type === "user",
+    ).length;
+    const totalMs =
+      spans.length > 0 ? Math.max(...spans.map((span) => span.endMs), 0) : 0;
     return { toolSpans, assistantSpans, userTurns, totalMs };
   }, [spans]);
 
@@ -242,21 +260,39 @@ function ComparePane({ session }: { session: CompareSessionRef }) {
         <div className="pane-header-left pane-header-stack">
           <div className="pane-header-topline">
             <span className="pane-project-tag">{project.title}</span>
-            <span className="pane-session-id mono-text">{identity.shortId}</span>
-            {meta?.models[0] && <span className="compact-chip mono-text">{meta.models[0]}</span>}
+            <span className="pane-session-id mono-text">
+              {identity.shortId}
+            </span>
+            {meta?.models[0] && (
+              <span className="compact-chip mono-text">{meta.models[0]}</span>
+            )}
           </div>
-          <div className="pane-session-path mono-text" title={`${project.detail}/${identity.decoded}`}>
+          <div
+            className="pane-session-path mono-text"
+            title={`${project.detail}/${identity.decoded}`}
+          >
             {project.detail}/{identity.decoded}
           </div>
         </div>
         <div className="pane-header-right">
-          <button className={`btn btn-sm ${traceVisible ? "" : "btn-accent"}`} onClick={() => setTraceVisible((v) => !v)}>
+          <button
+            className={`btn btn-sm ${traceVisible ? "" : "btn-accent"}`}
+            onClick={() => setTraceVisible((v) => !v)}
+          >
             {traceVisible ? "Hide trace" : "Trace"}
           </button>
-          <Link className="btn btn-sm" to={`/project/${encodeURIComponent(session.dirName)}/session/${encodeURIComponent(session.filename)}`}>
+          <Link
+            className="btn btn-sm"
+            to={`/project/${encodeURIComponent(session.dirName)}/session/${encodeURIComponent(session.filename)}`}
+          >
             Open
           </Link>
-          <button className="btn btn-sm" onClick={() => removeSelection(session)}>Remove</button>
+          <button
+            className="btn btn-sm"
+            onClick={() => removeSelection(session)}
+          >
+            Remove
+          </button>
         </div>
       </div>
 
@@ -264,36 +300,65 @@ function ComparePane({ session }: { session: CompareSessionRef }) {
         <div className="pane-stats-row">
           <div className="pane-stat">
             <span className="pane-stat-label">Time</span>
-            <span className="pane-stat-value">{formatTimestamp(meta.timestamp)}</span>
+            <span className="pane-stat-value">
+              {formatTimestamp(meta.timestamp)}
+            </span>
           </div>
           <div className="pane-stat">
             <span className="pane-stat-label">Duration</span>
-            <span className="pane-stat-value">{formatDuration(meta.durationSeconds)}</span>
+            <span className="pane-stat-value">
+              {formatDuration(meta.durationSeconds)}
+            </span>
           </div>
           <div className="pane-stat">
             <span className="pane-stat-label">Tokens</span>
-            <span className="pane-stat-value">{formatTokens(meta.inputTokens + meta.outputTokens)}</span>
+            <span className="pane-stat-value">
+              {formatTokens(meta.inputTokens + meta.outputTokens)}
+            </span>
           </div>
           <div className="pane-stat">
             <span className="pane-stat-label">Cost</span>
-            <span className="pane-stat-value" style={{ color: "var(--color-cost)" }}>${meta.totalCost.toFixed(4)}</span>
+            <span
+              className="pane-stat-value"
+              style={{ color: "var(--color-cost)" }}
+            >
+              ${meta.totalCost.toFixed(4)}
+            </span>
           </div>
           <div className="pane-stat">
             <span className="pane-stat-label">Trace</span>
-            <span className="pane-stat-value">{formatTraceDuration(traceStats.totalMs)}</span>
+            <span className="pane-stat-value">
+              {formatTraceDuration(traceStats.totalMs)}
+            </span>
           </div>
           <div className="pane-stat">
             <span className="pane-stat-label">Steps</span>
-            <span className="pane-stat-value">{traceStats.toolSpans} tools · {traceStats.assistantSpans} LLM</span>
+            <span className="pane-stat-value">
+              {traceStats.toolSpans} tools · {traceStats.assistantSpans} LLM
+            </span>
           </div>
         </div>
       )}
-      {metaLoading && <div className="pane-stats-row"><span className="pane-stat-label loading-pulse">Loading…</span></div>}
-      {metaError && <div className="pane-stats-row"><span style={{ color: "var(--color-error)", fontSize: 12 }}>{metaError}</span></div>}
+      {metaLoading && (
+        <div className="pane-stats-row">
+          <span className="pane-stat-label loading-pulse">Loading…</span>
+        </div>
+      )}
+      {metaError && (
+        <div className="pane-stats-row">
+          <span style={{ color: "var(--color-error)", fontSize: 12 }}>
+            {metaError}
+          </span>
+        </div>
+      )}
 
       {traceVisible && (
         <div className="pane-trace-block">
-          <TraceTimeline spans={spans} loading={spansLoading} error={spansError} />
+          <TraceTimeline
+            spans={spans}
+            loading={spansLoading}
+            error={spansError}
+          />
         </div>
       )}
 
@@ -304,9 +369,17 @@ function ComparePane({ session }: { session: CompareSessionRef }) {
             <span>Generating export…</span>
           </div>
         )}
-        {exportError && <div className="export-status error">Export failed: {exportError}</div>}
+        {exportError && (
+          <div className="export-status error">
+            Export failed: {exportError}
+          </div>
+        )}
         {exportUrl && (
-          <iframe className="export-iframe compare-export-iframe" src={exportUrl} title={`Session Export ${identity.shortId}`} />
+          <iframe
+            className="export-iframe compare-export-iframe"
+            src={exportUrl}
+            title={`Session Export ${identity.shortId}`}
+          />
         )}
       </div>
     </section>

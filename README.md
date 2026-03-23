@@ -74,12 +74,12 @@ pi-session-viewer/
 
 ## API
 
-| Endpoint | Description |
-|---|---|
-| `GET /api/projects` | List all projects with display paths and session counts |
-| `GET /api/projects/:dirName/sessions` | Session metadata (tokens, cost, duration, models) |
-| `GET /api/projects/:dirName/sessions/:filename/spans` | Trace spans for the Gantt timeline |
-| `GET /api/projects/:dirName/sessions/:filename/export` | Theme-patched Pi HTML export (cached) |
+| Endpoint                                               | Description                                             |
+| ------------------------------------------------------ | ------------------------------------------------------- |
+| `GET /api/projects`                                    | List all projects with display paths and session counts |
+| `GET /api/projects/:dirName/sessions`                  | Session metadata (tokens, cost, duration, models)       |
+| `GET /api/projects/:dirName/sessions/:filename/spans`  | Trace spans for the Gantt timeline                      |
+| `GET /api/projects/:dirName/sessions/:filename/export` | Theme-patched Pi HTML export (cached)                   |
 
 ## How It Works
 
@@ -93,8 +93,8 @@ pi-session-viewer/
 
 ## Scripts
 
-| Command | Description |
-|---|---|
-| `npm run dev` | Start dev server with Vite HMR |
-| `npm run build` | Build the React frontend |
-| `npm start` | Start production server |
+| Command         | Description                    |
+| --------------- | ------------------------------ |
+| `npm run dev`   | Start dev server with Vite HMR |
+| `npm run build` | Build the React frontend       |
+| `npm start`     | Start production server        |

@@ -12,6 +12,8 @@ import {
 import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
+import { z } from "zod";
+import { logger } from "./logger.js";
 
 interface ThemeExportColors {
   pageBg?: string;
@@ -35,16 +37,32 @@ type PiTheme = {
 interface PiInternals {
   exportFromFile: (
     inputPath: string,
-    options?: { outputPath?: string; themeName?: string } | string
+    options?: { outputPath?: string; themeName?: string } | string,
   ) => Promise<string>;
   loadThemeFromPath: (themePath: string, mode?: string) => PiTheme;
   setRegisteredThemes: (themes: PiTheme[]) => void;
   initTheme?: (themeName?: string, enableWatcher?: boolean) => void;
 }
 
+const themeColorValueSchema = z.union([z.string(), z.number()]);
+const themeFileSchema = z.object({
+  name: z.string().optional(),
+  vars: z.record(z.string(), themeColorValueSchema).optional(),
+  export: z
+    .object({
+      pageBg: themeColorValueSchema.optional(),
+      cardBg: themeColorValueSchema.optional(),
+      infoBg: themeColorValueSchema.optional(),
+    })
+    .optional(),
+});
+
 const THEME_OVERRIDE_MARKER = "pi-session-viewer-theme-override";
 
-const themeConfigCache = new Map<string, { mtimeMs: number; config: ThemeConfig }>();
+const themeConfigCache = new Map<
+  string,
+  { mtimeMs: number; config: ThemeConfig }
+>();
 let piInternalsPromise: Promise<PiInternals> | null = null;
 
 export async function getThemeCacheToken(themePath: string): Promise<string> {
@@ -55,7 +73,7 @@ export async function getThemeCacheToken(themePath: string): Promise<string> {
 export async function exportSessionHtml(
   inputPath: string,
   outputPath: string,
-  themePath: string
+  themePath: string,
 ): Promise<void> {
   const themeConfig = await readThemeConfig(themePath);
 
@@ -63,7 +81,10 @@ export async function exportSessionHtml(
     await exportViaPiInternals(inputPath, outputPath, themePath, themeConfig);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.warn(`Pi export API unavailable, falling back to CLI export: ${message}`);
+    logger.warn(
+      { err: error },
+      `Pi export API unavailable, falling back to CLI export: ${message}`,
+    );
     await exportViaCliFallback(inputPath, outputPath);
   }
 
@@ -90,16 +111,30 @@ async function readThemeConfig(themePath: string): Promise<ThemeConfig> {
   }
 
   const content = await readFile(themePath, "utf-8");
-  const json = JSON.parse(content) as {
-    name?: string;
-    vars?: Record<string, ThemeColorValue>;
-    export?: {
-      pageBg?: ThemeColorValue;
-      cardBg?: ThemeColorValue;
-      infoBg?: ThemeColorValue;
-    };
-  };
+  const rawTheme = JSON.parse(content) as unknown;
+  const parsedTheme = themeFileSchema.safeParse(rawTheme);
 
+  if (!parsedTheme.success) {
+    const fallbackName = basename(themePath, ".json");
+    logger.warn(
+      { themePath, issues: parsedTheme.error.issues },
+      "Invalid theme config, using defaults",
+    );
+
+    const fallbackConfig: ThemeConfig = {
+      name: fallbackName,
+      colors: {},
+      cacheToken: `${sanitizeToken(fallbackName)}_${fileStat.mtimeMs}_invalid`,
+    };
+
+    themeConfigCache.set(themePath, {
+      mtimeMs: fileStat.mtimeMs,
+      config: fallbackConfig,
+    });
+    return fallbackConfig;
+  }
+
+  const json = parsedTheme.data;
   const vars = json.vars ?? {};
   const name = json.name ?? basename(themePath, ".json");
   const config: ThemeConfig = {
@@ -119,7 +154,7 @@ async function readThemeConfig(themePath: string): Promise<ThemeConfig> {
 function resolveThemeColorValue(
   value: ThemeColorValue,
   vars: Record<string, ThemeColorValue>,
-  seen = new Set<string>()
+  seen = new Set<string>(),
 ): string | undefined {
   if (value === undefined) {
     return undefined;
@@ -231,7 +266,7 @@ function patchExportHtml(html: string, colors: ThemeExportColors): string {
 
   const existingBlock = new RegExp(
     `<!-- ${THEME_OVERRIDE_MARKER}:start -->[\\s\\S]*?<!-- ${THEME_OVERRIDE_MARKER}:end -->`,
-    "g"
+    "g",
   );
 
   if (existingBlock.test(html)) {
@@ -249,7 +284,7 @@ async function exportViaPiInternals(
   inputPath: string,
   outputPath: string,
   themePath: string,
-  themeConfig: ThemeConfig
+  themeConfig: ThemeConfig,
 ): Promise<void> {
   const pi = await loadPiInternals();
   const options: { outputPath: string; themeName?: string } = { outputPath };
@@ -266,7 +301,7 @@ async function exportViaPiInternals(
 
 async function exportViaCliFallback(
   inputPath: string,
-  outputPath: string
+  outputPath: string,
 ): Promise<void> {
   const tempDir = await mkdtemp(join(tmpdir(), "pi-session-viewer-export-"));
 
@@ -274,11 +309,13 @@ async function exportViaCliFallback(
     const { code, stdout, stderr } = await runProcess(
       "pi",
       ["--export", inputPath],
-      { cwd: tempDir, timeoutMs: 60_000 }
+      { cwd: tempDir, timeoutMs: 60_000 },
     );
 
     if (code !== 0) {
-      throw new Error(`pi --export exited with code ${code}: ${stderr || stdout}`);
+      throw new Error(
+        `pi --export exited with code ${code}: ${stderr || stdout}`,
+      );
     }
 
     const generatedPath = await findGeneratedHtml(tempDir, stdout);
@@ -312,25 +349,35 @@ async function findGeneratedHtml(dir: string, stdout: string): Promise<string> {
     return htmlFiles[htmlFiles.length - 1];
   }
 
-  throw new Error("Export completed but HTML file was not found in fallback directory");
+  throw new Error(
+    "Export completed but HTML file was not found in fallback directory",
+  );
 }
 
 async function loadPiInternals(): Promise<PiInternals> {
   if (!piInternalsPromise) {
     piInternalsPromise = (async () => {
       const packageRoot = await resolvePiPackageRoot();
-      const exportModulePath = join(packageRoot, "dist", "core", "export-html", "index.js");
+      const exportModulePath = join(
+        packageRoot,
+        "dist",
+        "core",
+        "export-html",
+        "index.js",
+      );
       const themeModulePath = join(
         packageRoot,
         "dist",
         "modes",
         "interactive",
         "theme",
-        "theme.js"
+        "theme.js",
       );
 
       if (!existsSync(exportModulePath) || !existsSync(themeModulePath)) {
-        throw new Error("Pi export internals were not found in the installed package");
+        throw new Error(
+          "Pi export internals were not found in the installed package",
+        );
       }
 
       const [exportModule, themeModule] = await Promise.all([
@@ -345,7 +392,9 @@ async function loadPiInternals(): Promise<PiInternals> {
         throw new Error("Pi theme module does not expose loadThemeFromPath()");
       }
       if (typeof themeModule.setRegisteredThemes !== "function") {
-        throw new Error("Pi theme module does not expose setRegisteredThemes()");
+        throw new Error(
+          "Pi theme module does not expose setRegisteredThemes()",
+        );
       }
 
       return {
@@ -377,9 +426,13 @@ async function resolvePiPackageRoot(): Promise<string> {
     }
   }
 
-  const globalModulesRoot = await resolveGlobalNodeModulesRoot().catch(() => null);
+  const globalModulesRoot = await resolveGlobalNodeModulesRoot().catch(
+    () => null,
+  );
   if (globalModulesRoot) {
-    candidates.push(join(globalModulesRoot, "@mariozechner", "pi-coding-agent"));
+    candidates.push(
+      join(globalModulesRoot, "@mariozechner", "pi-coding-agent"),
+    );
   }
 
   for (const candidate of dedupe(candidates)) {
@@ -432,7 +485,9 @@ async function isPiPackageRoot(candidate: string): Promise<boolean> {
   }
 
   try {
-    const packageJson = JSON.parse(await readFile(packageJsonPath, "utf-8")) as {
+    const packageJson = JSON.parse(
+      await readFile(packageJsonPath, "utf-8"),
+    ) as {
       name?: string;
     };
     return packageJson.name === "@mariozechner/pi-coding-agent";
@@ -464,7 +519,7 @@ function dedupe(values: string[]): string[] {
 function runProcess(
   command: string,
   args: string[],
-  options: { cwd?: string; timeoutMs?: number } = {}
+  options: { cwd?: string; timeoutMs?: number } = {},
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const proc = spawn(command, args, {
@@ -482,7 +537,11 @@ function runProcess(
       }
     };
 
-    const finish = (result: { code: number; stdout: string; stderr: string }) => {
+    const finish = (result: {
+      code: number;
+      stdout: string;
+      stderr: string;
+    }) => {
       if (finished) return;
       finished = true;
       cleanup();
@@ -512,8 +571,17 @@ function runProcess(
           if (finished) return;
           finished = true;
           proc.kill();
-          reject(new Error(`${command} timed out after ${options.timeoutMs}ms`));
+          reject(
+            new Error(`${command} timed out after ${options.timeoutMs}ms`),
+          );
         }, options.timeoutMs)
       : undefined;
   });
 }
+
+export const __private__ = {
+  ansi256ToHex,
+  patchExportHtml,
+  resolveThemeColorValue,
+  sanitizeToken,
+};
