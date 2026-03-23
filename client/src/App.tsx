@@ -63,10 +63,13 @@ function formatSessionLabel(raw: string) {
 
 function Header() {
   const location = useLocation();
-  const { selected, readyToCompare } = useCompare();
+  const { selected, readyToCompare, clearSelection } = useCompare();
   const parts = location.pathname.split("/").filter(Boolean);
   const project = parts[1] ? formatProjectLabel(parts[1]) : null;
   const session = parts[3] ? formatSessionLabel(parts[3]) : null;
+  const isComparePage = location.pathname === "/compare";
+  const isLandingPage = location.pathname === "/";
+  const projectHref = parts[1] ? `/project/${parts[1]}` : null;
 
   return (
     <header className="header">
@@ -104,6 +107,24 @@ function Header() {
                 </>
               )}
             </nav>
+          )}
+
+          {!isLandingPage && (
+            <Link to="/" className="header-compare">
+              <span>All projects</span>
+            </Link>
+          )}
+
+          {projectHref && session && (
+            <Link to={projectHref} className="header-compare">
+              <span>All sessions</span>
+            </Link>
+          )}
+
+          {isComparePage && selected.length > 0 && (
+            <button className="header-compare header-compare-button" onClick={clearSelection}>
+              <span>Clear</span>
+            </button>
           )}
 
           <Link

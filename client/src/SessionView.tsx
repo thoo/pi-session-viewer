@@ -1,7 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { TraceTimeline } from "./TraceTimeline";
-import { useCompare } from "./CompareContext";
+
+interface SessionMeta {
+  filename: string;
+  timestamp: string;
+  durationSeconds: number;
+  models: string[];
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  totalCost: number;
+  toolCalls: number;
+  messageCount: number;
+}
 
 interface TraceSpan {
   id: string;
@@ -100,6 +113,34 @@ function getSessionIdentity(filename: string) {
   };
 }
 
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  if (m < 60) return `${m}m ${s}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
+}
+
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}
+
+function formatTimestamp(ts: string): string {
+  try {
+    const d = new Date(ts);
+    return (
+      d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) +
+      ", " +
+      d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })
+    );
+  } catch {
+    return ts;
+  }
+}
+
 function formatTraceDuration(ms: number) {
   if (ms <= 0) return "0s";
   if (ms < 1000) return `${Math.round(ms)}ms`;
@@ -116,7 +157,10 @@ export function SessionView() {
     dirName: string;
     filename: string;
   }>();
-  const { selected, isSelected, toggleSelection, readyToCompare } = useCompare();
+
+  const [sessionMeta, setSessionMeta] = useState<SessionMeta | null>(null);
+  const [metaLoading, setMetaLoading] = useState(true);
+  const [metaError, setMetaError] = useState<string | null>(null);
 
   const [spans, setSpans] = useState<TraceSpan[]>([]);
   const [spansLoading, setSpansLoading] = useState(true);
@@ -128,8 +172,25 @@ export function SessionView() {
   const [traceVisible, setTraceVisible] = useState(false);
 
   const apiBase = `/api/projects/${encodeURIComponent(dirName!)}/sessions/${encodeURIComponent(filename!)}`;
-  const projectTitle = useMemo(() => formatProjectInfo(dirName || "").title, [dirName]);
   const session = useMemo(() => getSessionIdentity(filename || ""), [filename]);
+
+  useEffect(() => {
+    setSessionMeta(null);
+    setMetaLoading(true);
+    setMetaError(null);
+    fetch(`/api/projects/${encodeURIComponent(dirName!)}/sessions`)
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then((items: SessionMeta[]) => {
+        const match = items.find((item) => item.filename === filename) ?? null;
+        if (!match) throw new Error("Session metadata not found");
+        setSessionMeta(match);
+      })
+      .catch((e) => setMetaError(e.message))
+      .finally(() => setMetaLoading(false));
+  }, [dirName, filename]);
 
   useEffect(() => {
     setSpansLoading(true);
@@ -194,22 +255,26 @@ export function SessionView() {
         )}
 
         <section className="panel-card export-panel">
-          <div className="panel-header viewer-panel-header session-export-header">
-            <div className="session-export-heading">
-              <div className="panel-title mono-text">{session.shortId}</div>
-              {!spansLoading && (
-                <div className="session-export-stats mono-text">
-                  <span className="session-export-stat">{traceStats.userTurns} turns</span>
-                  <span className="session-export-stat">{traceStats.assistantSpans} LLM</span>
-                  <span className="session-export-stat">{traceStats.toolSpans} tools</span>
-                  <span className="session-export-stat">{formatTraceDuration(traceStats.totalMs)}</span>
-                </div>
+          <div className="panel-header transcript-toolbar">
+            <div className="transcript-toolbar-main">
+              <span className="panel-title mono-text transcript-toolbar-id">{session.shortId}</span>
+              {metaLoading && <span className="session-hero-metric loading-pulse">Loading metadata…</span>}
+              {sessionMeta && (
+                <>
+                  <span className="session-hero-metric">{formatTimestamp(sessionMeta.timestamp)}</span>
+                  <span className="session-hero-metric">{formatDuration(sessionMeta.durationSeconds)}</span>
+                  <span className="session-hero-metric">
+                    {formatTokens(sessionMeta.inputTokens + sessionMeta.outputTokens)} tokens
+                  </span>
+                  <span className="session-hero-metric">{sessionMeta.toolCalls} tools</span>
+                </>
+              )}
+              {!spansLoading && spans.length > 0 && (
+                <span className="session-hero-metric">{traceStats.userTurns} turns</span>
               )}
             </div>
 
-            <div className="toolbar-actions">
-              <Link className="btn btn-sm" to="/">All projects</Link>
-              <Link className="btn btn-sm" to={`/project/${encodeURIComponent(dirName!)}`}>All sessions</Link>
+            <div className="transcript-toolbar-actions">
               <button
                 className={`btn btn-sm ${traceVisible ? "btn-accent" : ""}`}
                 onClick={() => setTraceVisible((v) => !v)}
@@ -217,21 +282,6 @@ export function SessionView() {
               >
                 {traceVisible ? "Hide trace" : "Show trace"}
               </button>
-              <button
-                className={`btn btn-sm ${isSelected({ dirName: dirName!, filename: filename! }) ? "btn-accent" : ""}`}
-                onClick={() =>
-                  toggleSelection({
-                    dirName: dirName!,
-                    filename: filename!,
-                    projectTitle,
-                  })
-                }
-              >
-                {isSelected({ dirName: dirName!, filename: filename! })
-                  ? "Selected"
-                  : `Compare (${selected.length}/2)`}
-              </button>
-              {readyToCompare && <Link className="btn btn-sm" to="/compare">Compare now</Link>}
               {exportUrl && (
                 <a className="btn btn-sm" href={exportUrl} target="_blank" rel="noreferrer">
                   Open in new tab

@@ -85,48 +85,113 @@ export function ProjectList() {
       .finally(() => setLoading(false));
   }, []);
 
+  const sortedProjects = useMemo(
+    () =>
+      [...projects].sort((a, b) => {
+        const countDiff = b.sessionCount - a.sessionCount;
+        if (countDiff !== 0) return countDiff;
+        return a.displayPath.localeCompare(b.displayPath);
+      }),
+    [projects],
+  );
+
   const totalSessions = useMemo(
     () => projects.reduce((sum, p) => sum + p.sessionCount, 0),
     [projects],
   );
 
-  return (
-    <div className="container page-stack">
-      <section className="landing-surface panel-card">
-        <div className="landing-hero">
-          <div className="landing-signal" aria-hidden="true">
-            {HERO_ROWS.map((row, rowIndex) => (
-              <div key={rowIndex} className="signal-row">
-                {row.map((segment, segmentIndex) => (
-                  <span
-                    key={`${rowIndex}-${segmentIndex}`}
-                    className={`signal-segment ${getSignalClass(segment.type)}`}
-                    style={{
-                      width: `${segment.width}%`,
-                      animationDelay: `${rowIndex * 140 + segmentIndex * 90}ms`,
-                    }}
-                  />
-                ))}
-              </div>
-            ))}
-          </div>
+  const topProject = sortedProjects[0] ?? null;
+  const averageSessions = sortedProjects.length > 0
+    ? Math.round(totalSessions / sortedProjects.length)
+    : 0;
 
+  return (
+    <div className="container page-stack landing-page">
+      <section className="landing-surface landing-hero-shell panel-card">
+        <div className="landing-signal" aria-hidden="true">
+          {HERO_ROWS.map((row, rowIndex) => (
+            <div key={rowIndex} className="signal-row">
+              {row.map((segment, segmentIndex) => (
+                <span
+                  key={`${rowIndex}-${segmentIndex}`}
+                  className={`signal-segment ${getSignalClass(segment.type)}`}
+                  style={{
+                    width: `${segment.width}%`,
+                    animationDelay: `${rowIndex * 140 + segmentIndex * 90}ms`,
+                  }}
+                />
+              ))}
+            </div>
+          ))}
+        </div>
+
+        <div className="landing-hero-grid">
           <div className="landing-hero-copy">
+            <div className="landing-kicker">Local session logs</div>
             <div className="landing-brand">Pi Session Viewer</div>
             <div className="landing-meta mono-text">
-              ~/.pi/agent/sessions {loading ? "· scanning…" : `· ${projects.length} projects · ${totalSessions} sessions`}
+              ~/.pi/agent/sessions {loading ? "· scanning…" : `· ${sortedProjects.length} projects · ${totalSessions} sessions`}
+            </div>
+            <div className="landing-actions">
+              <a href="#project-directory" className="btn btn-accent">
+                Browse projects
+              </a>
+              <Link to="/compare" className="btn">
+                Open compare
+              </Link>
+            </div>
+          </div>
+
+          <div className="landing-hero-aside">
+            <div className="landing-stat-grid">
+              <div className="landing-stat">
+                <span className="landing-stat-label">Projects</span>
+                <span className="landing-stat-value mono-text">
+                  {loading ? "—" : sortedProjects.length}
+                </span>
+              </div>
+              <div className="landing-stat">
+                <span className="landing-stat-label">Sessions</span>
+                <span className="landing-stat-value mono-text">
+                  {loading ? "—" : totalSessions}
+                </span>
+              </div>
+              <div className="landing-stat">
+                <span className="landing-stat-label">Avg / project</span>
+                <span className="landing-stat-value mono-text">
+                  {loading ? "—" : averageSessions}
+                </span>
+              </div>
+            </div>
+
+            <div className="landing-spotlight">
+              <span className="landing-spotlight-label">Most active workspace</span>
+              <div className="landing-spotlight-value">
+                {loading ? "Scanning local sessions…" : topProject ? getProjectName(topProject.displayPath) : "No sessions found"}
+              </div>
+              <div className="project-path">
+                {loading
+                  ? "Waiting for directory scan"
+                  : topProject
+                    ? `${topProject.displayPath} · ${topProject.sessionCount} sessions`
+                    : "Start a Pi session to see it appear here."}
+              </div>
             </div>
           </div>
         </div>
 
-        <div className="landing-directory" id="project-directory">
+        <div className="landing-directory landing-directory-section" id="project-directory">
           <div className="section-heading landing-directory-head">
             <div>
               <div className="section-kicker">Projects</div>
+              <div className="section-title">Choose a workspace</div>
+              <div className="section-summary">
+                Open any project to sort its runs by cost, duration, model, or tool activity.
+              </div>
             </div>
-            {!loading && !error && projects.length > 0 && (
+            {!loading && !error && sortedProjects.length > 0 && (
               <div className="directory-count mono-text">
-                {projects.length} · {totalSessions}
+                {sortedProjects.length} · {totalSessions}
               </div>
             )}
           </div>
@@ -152,15 +217,15 @@ export function ProjectList() {
             <div className="status-box error">Failed to load projects: {error}</div>
           )}
 
-          {!loading && !error && projects.length === 0 && (
+          {!loading && !error && sortedProjects.length === 0 && (
             <div className="status-box">
               No sessions found in ~/.pi/agent/sessions/
             </div>
           )}
 
-          {!loading && !error && projects.length > 0 && (
+          {!loading && !error && sortedProjects.length > 0 && (
             <div className="project-directory-grid">
-              {projects.map((project, i) => {
+              {sortedProjects.map((project, i) => {
                 const name = getProjectName(project.displayPath);
                 return (
                   <Link

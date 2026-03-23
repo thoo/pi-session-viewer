@@ -163,46 +163,119 @@ export function SessionTable() {
       cacheWriteTokens: sessions.reduce((sum, item) => sum + item.cacheWriteTokens, 0),
       totalCost: sessions.reduce((sum, item) => sum + item.totalCost, 0),
       toolCalls: sessions.reduce((sum, item) => sum + item.toolCalls, 0),
+      messageCount: sessions.reduce((sum, item) => sum + item.messageCount, 0),
       modelCount: new Set(sessions.flatMap((item) => item.models)).size,
     };
+  }, [sessions]);
+
+  const latestSession = useMemo(() => {
+    return sessions.reduce<SessionMeta | null>((latest, session) => {
+      if (!latest) return session;
+      return session.timestamp > latest.timestamp ? session : latest;
+    }, null);
   }, [sessions]);
 
   const rangeStart = sessions.length === 0 ? 0 : page * PAGE_SIZE + 1;
   const rangeEnd = Math.min((page + 1) * PAGE_SIZE, sessions.length);
 
   const sessionSummary = loading
-    ? "Loading…"
+    ? "Loading project sessions…"
     : sessions.length === 0
       ? "No sessions"
-      : `${totals.modelCount} models. ${formatTokens(
+      : `${sessions.length} runs · ${totals.modelCount} models · ${formatTokens(
           totals.inputTokens + totals.outputTokens,
-        )} tokens, $${totals.totalCost.toFixed(2)} total, ${totals.toolCalls} tool calls.`;
+        )} tokens · $${totals.totalCost.toFixed(2)} total cost · ${totals.toolCalls} tool calls`;
 
   return (
     <div className="container page-stack">
+      <section className="compact-toolbar project-toolbar">
+        <div className="compact-toolbar-left project-toolbar-left">
+          <div className="compact-toolbar-title project-toolbar-copy">
+            <span className="compact-toolbar-sub">Project workspace</span>
+            <div className="project-toolbar-heading-row">
+              <span className="compact-toolbar-heading project-toolbar-heading">
+                {projectInfo.title}
+              </span>
+              {!loading && !error && (
+                <span className="compact-chip mono-text">{sessions.length} runs</span>
+              )}
+            </div>
+            <span className="compact-toolbar-sub mono-text" title={projectInfo.detail}>
+              {projectInfo.detail}
+            </span>
+          </div>
+
+          {!loading && !error && sessions.length > 0 && (
+            <div className="project-toolbar-metrics mono-text">
+              <span className="session-hero-metric">{totals.modelCount} models</span>
+              <span className="session-hero-metric">
+                {formatTokens(totals.inputTokens + totals.outputTokens)} tokens
+              </span>
+              <span className="session-hero-metric">${totals.totalCost.toFixed(2)}</span>
+              <span className="session-hero-metric">{totals.toolCalls} tools</span>
+            </div>
+          )}
+        </div>
+
+        <div className="compact-toolbar-right project-toolbar-actions">
+          {selected.length > 0 && (
+            <span className="compact-chip mono-text">{selected.length}/2 selected</span>
+          )}
+          {readyToCompare && <Link className="btn btn-sm" to="/compare">Compare</Link>}
+          {selected.length > 0 && (
+            <button className="btn btn-sm" onClick={clearSelection}>Clear</button>
+          )}
+          <button className="btn btn-sm btn-accent" onClick={loadSessions}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M1 4v6h6" />
+              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+            </svg>
+            Refresh
+          </button>
+        </div>
+      </section>
+
+      {!loading && !error && sessions.length > 0 && (
+        <section className="overview-strip">
+          <div className="overview-metric">
+            <span className="overview-label">Sessions</span>
+            <span className="overview-value mono-text">{sessions.length}</span>
+            <span className="overview-detail">Indexed local runs</span>
+          </div>
+          <div className="overview-metric">
+            <span className="overview-label">Models</span>
+            <span className="overview-value mono-text">{totals.modelCount}</span>
+            <span className="overview-detail">Unique model switches seen</span>
+          </div>
+          <div className="overview-metric">
+            <span className="overview-label">Tokens</span>
+            <span className="overview-value mono-text">
+              {formatTokens(totals.inputTokens + totals.outputTokens)}
+            </span>
+            <span className="overview-detail">Prompt + completion volume</span>
+          </div>
+          <div className="overview-metric">
+            <span className="overview-label">Total cost</span>
+            <span className="overview-value mono-text">${totals.totalCost.toFixed(2)}</span>
+            <span className="overview-detail">Across cached session metadata</span>
+          </div>
+          <div className="overview-metric">
+            <span className="overview-label">Latest run</span>
+            <span className="overview-value mono-text">
+              {latestSession ? formatTimestamp(latestSession.timestamp) : "—"}
+            </span>
+            <span className="overview-detail">
+              {latestSession ? `${latestSession.toolCalls} tools · ${latestSession.messageCount} messages` : "No activity yet"}
+            </span>
+          </div>
+        </section>
+      )}
+
       <section className="panel-card table-panel">
         <div className="panel-header table-panel-header">
           <div className="table-panel-heading">
-            <div className="panel-title">Sessions</div>
+            <div className="panel-title">Session index</div>
             <div className="table-panel-summary mono-text">{sessionSummary}</div>
-          </div>
-
-          <div className="toolbar-actions">
-            <Link className="btn btn-sm" to="/">All projects</Link>
-            {selected.length > 0 && (
-              <span className="compact-chip mono-text">{selected.length}/2 selected</span>
-            )}
-            {readyToCompare && <Link className="btn btn-sm" to="/compare">Compare</Link>}
-            {selected.length > 0 && (
-              <button className="btn btn-sm" onClick={clearSelection}>Clear</button>
-            )}
-            <button className="btn btn-sm btn-accent" onClick={loadSessions}>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M1 4v6h6" />
-                <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
-              </svg>
-              Refresh
-            </button>
           </div>
         </div>
 

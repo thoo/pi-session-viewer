@@ -118,41 +118,22 @@ function formatTimestamp(ts: string): string {
   }
 }
 
+function formatTraceDuration(ms: number) {
+  if (ms <= 0) return "0s";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  const minutes = Math.floor(ms / 60_000);
+  const seconds = Math.round((ms % 60_000) / 1000);
+  if (minutes < 60) return `${minutes}m ${seconds}s`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${minutes % 60}m`;
+}
+
 export function SessionCompare() {
-  const { selected, clearSelection, readyToCompare } = useCompare();
+  const { selected, readyToCompare } = useCompare();
 
   return (
     <div className="container page-stack compare-page">
-      <div className="compact-toolbar">
-        <div className="compact-toolbar-left">
-          <Link className="btn" to="/">Projects</Link>
-          <div className="compact-toolbar-title">
-            <span className="compact-toolbar-heading">Compare</span>
-            <span className="compact-toolbar-sub">
-              {selected.length === 0
-                ? "No sessions selected"
-                : selected.length === 1
-                  ? "Select one more session"
-                  : "Side-by-side comparison"}
-            </span>
-          </div>
-        </div>
-        <div className="compact-toolbar-right">
-          {selected.map((s) => {
-            const p = formatProjectInfo(s.dirName);
-            const id = getSessionIdentity(s.filename);
-            return (
-              <span key={`${s.dirName}:${s.filename}`} className="compact-chip mono-text">
-                {p.title}/{id.shortId}
-              </span>
-            );
-          })}
-          {selected.length > 0 && (
-            <button className="btn btn-sm" onClick={clearSelection}>Clear</button>
-          )}
-        </div>
-      </div>
-
       {!readyToCompare && (
         <div className="status-box">
           {selected.length === 0
@@ -258,9 +239,15 @@ function ComparePane({ session }: { session: CompareSessionRef }) {
   return (
     <section className="panel-card compare-pane">
       <div className="pane-header">
-        <div className="pane-header-left">
-          <span className="pane-project-tag">{project.title}</span>
-          <span className="pane-session-id mono-text">{identity.shortId}</span>
+        <div className="pane-header-left pane-header-stack">
+          <div className="pane-header-topline">
+            <span className="pane-project-tag">{project.title}</span>
+            <span className="pane-session-id mono-text">{identity.shortId}</span>
+            {meta?.models[0] && <span className="compact-chip mono-text">{meta.models[0]}</span>}
+          </div>
+          <div className="pane-session-path mono-text" title={`${project.detail}/${identity.decoded}`}>
+            {project.detail}/{identity.decoded}
+          </div>
         </div>
         <div className="pane-header-right">
           <button className={`btn btn-sm ${traceVisible ? "" : "btn-accent"}`} onClick={() => setTraceVisible((v) => !v)}>
@@ -292,12 +279,12 @@ function ComparePane({ session }: { session: CompareSessionRef }) {
             <span className="pane-stat-value" style={{ color: "var(--color-cost)" }}>${meta.totalCost.toFixed(4)}</span>
           </div>
           <div className="pane-stat">
-            <span className="pane-stat-label">Tools</span>
-            <span className="pane-stat-value">{meta.toolCalls}</span>
+            <span className="pane-stat-label">Trace</span>
+            <span className="pane-stat-value">{formatTraceDuration(traceStats.totalMs)}</span>
           </div>
           <div className="pane-stat">
-            <span className="pane-stat-label">Model</span>
-            <span className="pane-stat-value mono-text">{meta.models[0] || "—"}</span>
+            <span className="pane-stat-label">Steps</span>
+            <span className="pane-stat-value">{traceStats.toolSpans} tools · {traceStats.assistantSpans} LLM</span>
           </div>
         </div>
       )}
