@@ -1,14 +1,22 @@
 # Pi Session Viewer
 
-A web app for browsing and visualizing [Pi agent](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent) session logs. Sessions are stored as JSONL files — this tool parses them and provides a searchable, sortable interface with a Gantt-chart trace timeline and HTML export previews.
+A web app for browsing and visualizing [Pi agent](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent) session logs. It reads Pi JSONL session files from `~/.pi/agent/sessions/` and provides:
+
+- a searchable project list
+- sortable session tables
+- session-to-session comparison
+- a Gantt-style trace timeline
+- themed HTML export previews
 
 ## Screenshots
 
-**Project list** — grouped by working directory, showing session counts.
+**Project list** — grouped by working directory, with search and session match previews.
 
-**Session table** — sortable by timestamp, duration, model, tokens, cost, tool calls.
+**Session table** — sortable by timestamp, duration, model, tokens, cost, and tool calls.
 
-**Session detail** — Gantt timeline showing LLM thinking time vs tool execution, with the `pi --export` HTML rendered below.
+**Session detail** — timeline showing assistant/tool activity plus the rendered Pi HTML export.
+
+**Session compare** — side-by-side comparison for two selected sessions.
 
 ## Quick Start
 
@@ -19,25 +27,34 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
+## Scripts
+
+| Command              | Description                             |
+| -------------------- | --------------------------------------- |
+| `npm run dev`        | Start the Express + Vite dev server     |
+| `npm run build`      | Build the React frontend to `dist/client` |
+| `npm start`          | Start the app in production mode        |
+| `npm run lint`       | Run ESLint                              |
+| `npm run lint:fix`   | Auto-fix ESLint issues                  |
+| `npm run format`     | Format the repo with Prettier           |
+| `npm run format:check` | Check formatting with Prettier        |
+| `npm test`           | Run the Vitest suite                    |
+
 ## Configuration
 
 ### Session Directory
 
 By default, sessions are read from:
 
-```
+```text
 ~/.pi/agent/sessions/
 ```
 
-To change this, edit the `SESSIONS_DIR` constant in [`server/sessions.ts`](server/sessions.ts) (line 7):
-
-```typescript
-const SESSIONS_DIR = join(homedir(), ".pi", "agent", "sessions");
-```
+To change this, edit the `SESSIONS_DIR` constant in [`server/sessions.ts`](server/sessions.ts).
 
 ### Port
 
-Set the `PORT` environment variable (default: `3000`):
+Set the `PORT` environment variable to override the default port (`3000`):
 
 ```bash
 PORT=8080 npm run dev
@@ -45,56 +62,82 @@ PORT=8080 npm run dev
 
 ### Export Cache
 
-Exported HTML files are cached in `~/.pi-session-viewer-cache/`. Cache invalidation includes the session mtime and the export theme file mtime, so editing `themes/tokyo-night.json` automatically regenerates exports. Delete this directory to clear the cache manually.
+Exported HTML files are cached in `~/.pi-session-viewer-cache/`.
+
+Cache invalidation includes:
+- session file mtime
+- selected theme cache token / theme file mtime
+
+Delete the cache directory to clear cached exports manually.
 
 ## Project Structure
 
-```
+```text
 pi-session-viewer/
 ├── server/
-│   ├── index.ts              # Express server, API routes, Vite dev middleware
-│   └── sessions.ts           # JSONL parsing, metadata aggregation, span
-│                              # computation, export caching, path sanitization
+│   ├── index.ts          # Express server, API routes, Vite dev middleware
+│   ├── sessions.ts       # Session scanning, path resolution, cache orchestration
+│   ├── sessionCore.ts    # JSONL parsing, metadata aggregation, trace span logic
+│   ├── piExport.ts       # Pi export integration, fallback CLI export, theme loading
+│   ├── piExportCore.ts   # Pure export/theme helpers used by runtime + tests
+│   └── logger.ts         # Pino logger setup
 ├── client/
-│   ├── index.html            # HTML shell with Google Fonts
-│   ├── vite.config.ts        # Vite config with API proxy to Express
+│   ├── index.html        # HTML shell with fonts
+│   ├── vite.config.ts    # Vite config
 │   └── src/
 │       ├── main.tsx          # React entry point
-│       ├── App.tsx           # Router (3 routes) + header with breadcrumbs
-│       ├── ProjectList.tsx   # Landing page — project cards grid
-│       ├── SessionTable.tsx  # Sortable table with metadata columns
-│       ├── SessionView.tsx   # Trace timeline + export iframe
-│       ├── TraceTimeline.tsx # Gantt-chart timeline component
-│       └── styles.css        # Global styles, dark theme, animations
-├── docs/
-│   └── plan.md               # Architecture and design document
+│       ├── App.tsx           # Router + header/breadcrumbs
+│       ├── CompareContext.tsx# Session comparison selection state
+│       ├── ProjectList.tsx   # Landing page + project/session search
+│       ├── SessionTable.tsx  # Sortable project session table
+│       ├── SessionView.tsx   # Single-session timeline + export preview
+│       ├── SessionCompare.tsx# Side-by-side session compare view
+│       ├── TraceTimeline.tsx # Gantt-style trace timeline component
+│       ├── api.ts            # Typed fetch helpers for the client
+│       └── styles.css        # Global styles and theme variables
+├── tests/
+│   └── server/
+│       ├── piExport.test.ts
+│       └── sessions.test.ts
+├── themes/
+│   └── tokyo-night.json
 ├── package.json
 └── tsconfig.json
 ```
 
 ## API
 
-| Endpoint                                               | Description                                             |
-| ------------------------------------------------------ | ------------------------------------------------------- |
+| Endpoint                                               | Description |
+| ------------------------------------------------------ | ----------- |
 | `GET /api/projects`                                    | List all projects with display paths and session counts |
-| `GET /api/projects/:dirName/sessions`                  | Session metadata (tokens, cost, duration, models)       |
-| `GET /api/projects/:dirName/sessions/:filename/spans`  | Trace spans for the Gantt timeline                      |
-| `GET /api/projects/:dirName/sessions/:filename/export` | Theme-patched Pi HTML export (cached)                   |
+| `GET /api/search?q=...`                                | Search projects and session filenames |
+| `GET /api/projects/:dirName/sessions`                  | List session metadata for a project |
+| `GET /api/projects/:dirName/sessions/:filename/meta`   | Fetch metadata for one session |
+| `GET /api/projects/:dirName/sessions/:filename/spans`  | Fetch timeline spans for one session |
+| `GET /api/projects/:dirName/sessions/:filename/export` | Return cached, theme-patched export HTML |
 
 ## How It Works
 
-1. **Scanning** — reads `~/.pi/agent/sessions/` for project directories. Each directory contains JSONL session files. The `cwd` field from the session header is used as the display path.
+1. **Scanning**
+   - Reads `~/.pi/agent/sessions/` for project directories.
+   - Uses the session header `cwd` as the display path when available.
 
-2. **Metadata** — each JSONL file is parsed to aggregate: input/output/cache tokens, cost, tool call count, message count, models used, and duration. Results are cached by file mtime.
+2. **Metadata**
+   - Parses JSONL messages to compute duration, token totals, cache tokens, cost, tool calls, models, and message count.
+   - Caches computed metadata by `(filePath, mtimeMs)`.
 
-3. **Trace spans** — assistant messages and tool calls are converted into positioned spans with start/end times. LLM thinking gaps between tool rounds are computed and inserted. The frontend renders these as a Gantt chart showing serial vs parallel execution.
+3. **Trace spans**
+   - Converts user, assistant, and tool activity into positioned spans.
+   - The frontend renders the result as a Gantt-style timeline for each session.
 
-4. **Export** — the server prefers Pi’s in-process Node export API, loading `themes/tokyo-night.json` in memory and then patching the generated HTML so the theme’s explicit `export` colors apply. If Pi internals cannot be imported, it falls back to `pi --export <file>` in a temp directory and applies the same patch. Results are cached in `~/.pi-session-viewer-cache/` with theme-aware invalidation.
+4. **Export**
+   - Prefers Pi's in-process Node export internals.
+   - Falls back to `pi --export <file>` in a temp directory when needed.
+   - Patches the generated HTML so explicit theme export colors are applied.
+   - Caches export output in `~/.pi-session-viewer-cache/`.
 
-## Scripts
+## Notes
 
-| Command         | Description                    |
-| --------------- | ------------------------------ |
-| `npm run dev`   | Start dev server with Vite HMR |
-| `npm run build` | Build the React frontend       |
-| `npm start`     | Start production server        |
+- Path parameters are sanitized before resolving session files.
+- Tests target pure helper modules (`sessionCore.ts`, `piExportCore.ts`) instead of production-only `__private__` exports.
+- ESLint is configured with type-aware TypeScript rules, and the client uses typed fetch helpers to avoid unsafe JSON/error flows.
