@@ -31,27 +31,33 @@ interface UserQuery {
   steps: Step[];
 }
 
-const COLORS: Record<string, { bg: string; border: string; dot: string; text: string; barBg: string }> = {
+const COLORS: Record<
+  string,
+  { bg: string; border: string; dot: string; text: string; barBg: string }
+> = {
   user: {
     bg: "var(--color-user-bg)",
     border: "var(--color-user)",
     dot: "var(--color-user)",
     text: "var(--color-user)",
-    barBg: "linear-gradient(90deg, rgba(122,162,247,0.28), rgba(122,162,247,0.08))",
+    barBg:
+      "linear-gradient(90deg, rgba(122,162,247,0.28), rgba(122,162,247,0.08))",
   },
   assistant: {
     bg: "var(--color-assistant-bg)",
     border: "var(--color-assistant)",
     dot: "var(--color-assistant)",
     text: "var(--color-assistant)",
-    barBg: "linear-gradient(90deg, rgba(115,218,202,0.28), rgba(115,218,202,0.08))",
+    barBg:
+      "linear-gradient(90deg, rgba(115,218,202,0.28), rgba(115,218,202,0.08))",
   },
   tool: {
     bg: "var(--color-tool-bg)",
     border: "var(--color-tool)",
     dot: "var(--color-tool)",
     text: "var(--color-tool)",
-    barBg: "linear-gradient(90deg, rgba(224,175,104,0.28), rgba(224,175,104,0.08))",
+    barBg:
+      "linear-gradient(90deg, rgba(224,175,104,0.28), rgba(224,175,104,0.08))",
   },
 };
 
@@ -71,7 +77,9 @@ function getModelShort(label: string): string {
 function compactLabel(label: string, max = 76) {
   const normalized = label.replace(/\s+/g, " ").trim();
   if (!normalized) return "Turn";
-  return normalized.length > max ? `${normalized.slice(0, max - 1)}…` : normalized;
+  return normalized.length > max
+    ? `${normalized.slice(0, max - 1)}…`
+    : normalized;
 }
 
 function groupIntoTurns(spans: TraceSpan[]): Turn[] {
@@ -124,7 +132,7 @@ function groupIntoUserQueries(turns: Turn[]): UserQuery[] {
   for (const query of queries) {
     const queryStartMs = query.userTurn
       ? query.userTurn.parent.startMs
-      : query.assistantTurns[0]?.parent.startMs ?? 0;
+      : (query.assistantTurns[0]?.parent.startMs ?? 0);
 
     let prevEndMs = query.userTurn ? query.userTurn.parent.endMs : queryStartMs;
 
@@ -173,7 +181,10 @@ function groupIntoUserQueries(turns: Turn[]): UserQuery[] {
     }
 
     if (query.steps.length > 0) {
-      query.totalDurationMs = Math.max(...query.steps.map((step) => step.endMs), 1);
+      query.totalDurationMs = Math.max(
+        ...query.steps.map((step) => step.endMs),
+        1,
+      );
     }
   }
 
@@ -187,7 +198,10 @@ function logScale(ms: number, maxLog: number): number {
 
 function getTimeTicks(totalMs: number): number[] {
   if (totalMs <= 0) return [];
-  const candidates = [10, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 30000, 60000, 120000, 300000, 600000];
+  const candidates = [
+    10, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 30000, 60000, 120000,
+    300000, 600000,
+  ];
   let step = candidates[candidates.length - 1];
   for (const candidate of candidates) {
     if (totalMs / candidate <= 8) {
@@ -217,12 +231,19 @@ export function TraceTimeline({
   const [traceOpen, setTraceOpen] = useState(true);
 
   const summary = useMemo(() => {
-    const totalMs = spans.length > 0 ? Math.max(...spans.map((span) => span.endMs), 1) : 0;
+    const totalMs =
+      spans.length > 0 ? Math.max(...spans.map((span) => span.endMs), 1) : 0;
     const turns = groupIntoTurns(spans);
     const queries = groupIntoUserQueries(turns);
-    const assistantSteps = queries.flatMap((query) => query.steps).filter((step) => step.type === "assistant").length;
-    const toolSteps = queries.flatMap((query) => query.steps).filter((step) => step.type === "tool").length;
-    const maxLogDuration = Math.log(Math.max(...queries.map((query) => query.totalDurationMs), 1) + 1);
+    const assistantSteps = queries
+      .flatMap((query) => query.steps)
+      .filter((step) => step.type === "assistant").length;
+    const toolSteps = queries
+      .flatMap((query) => query.steps)
+      .filter((step) => step.type === "tool").length;
+    const maxLogDuration = Math.log(
+      Math.max(...queries.map((query) => query.totalDurationMs), 1) + 1,
+    );
 
     return {
       totalMs,
@@ -236,7 +257,9 @@ export function TraceTimeline({
   if (loading) {
     return (
       <div className="trace-container">
-        <div className="trace-status-msg loading-pulse">Loading trace data…</div>
+        <div className="trace-status-msg loading-pulse">
+          Loading trace data…
+        </div>
       </div>
     );
   }
@@ -244,7 +267,10 @@ export function TraceTimeline({
   if (error) {
     return (
       <div className="trace-container">
-        <div className="trace-status-msg" style={{ color: "var(--color-error)" }}>
+        <div
+          className="trace-status-msg"
+          style={{ color: "var(--color-error)" }}
+        >
           Trace error: {error}
         </div>
       </div>
@@ -266,7 +292,9 @@ export function TraceTimeline({
         onClick={() => setTraceOpen((open) => !open)}
       >
         <div className="trace-header-left">
-          <span className={`trace-chevron ${traceOpen ? "trace-chevron-open" : ""}`}>
+          <span
+            className={`trace-chevron ${traceOpen ? "trace-chevron-open" : ""}`}
+          >
             <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
               <path
                 d="M3 1.5L7 5L3 8.5"
@@ -281,7 +309,8 @@ export function TraceTimeline({
           <div className="trace-title-group">
             <span className="trace-title">Session trace</span>
             <span className="trace-turn-count">
-              {summary.queries.length} turn{summary.queries.length !== 1 ? "s" : ""}
+              {summary.queries.length} turn
+              {summary.queries.length !== 1 ? "s" : ""}
             </span>
           </div>
         </div>
@@ -289,15 +318,23 @@ export function TraceTimeline({
         <div className="trace-header-right">
           <div className="trace-legend">
             <div className="trace-legend-item">
-              <div className="trace-legend-swatch" style={{ background: COLORS.assistant.border }} />
+              <div
+                className="trace-legend-swatch"
+                style={{ background: COLORS.assistant.border }}
+              />
               <span>{summary.assistantSteps} LLM</span>
             </div>
             <div className="trace-legend-item">
-              <div className="trace-legend-swatch" style={{ background: COLORS.tool.border }} />
+              <div
+                className="trace-legend-swatch"
+                style={{ background: COLORS.tool.border }}
+              />
               <span>{summary.toolSteps} tools</span>
             </div>
           </div>
-          <span className="trace-total-duration">{formatMs(summary.totalMs)}</span>
+          <span className="trace-total-duration">
+            {formatMs(summary.totalMs)}
+          </span>
         </div>
       </div>
 
@@ -333,7 +370,9 @@ function UserQueryRow({
   const ticks = expanded ? getTimeTicks(totalDurationMs) : [];
   const toolSteps = steps.filter((step) => step.type === "tool").length;
   const llmSteps = steps.filter((step) => step.type === "assistant").length;
-  const label = compactLabel(query.userTurn?.parent.label || `Turn ${index + 1}`);
+  const label = compactLabel(
+    query.userTurn?.parent.label || `Turn ${index + 1}`,
+  );
 
   return (
     <div className={`query-group ${expanded ? "query-group-expanded" : ""}`}>
@@ -344,7 +383,9 @@ function UserQueryRow({
         <div className="turn-label">
           <span className="turn-index">{index + 1}</span>
           {hasSteps && (
-            <span className={`turn-chevron ${expanded ? "turn-chevron-open" : ""}`}>
+            <span
+              className={`turn-chevron ${expanded ? "turn-chevron-open" : ""}`}
+            >
               <svg width="8" height="8" viewBox="0 0 10 10" fill="currentColor">
                 <path
                   d="M3 1.5L7 5L3 8.5"
@@ -387,7 +428,9 @@ function UserQueryRow({
                   style={{ left: `${(tick / totalDurationMs) * 100}%` }}
                 >
                   <div className="tl-ruler-mark" />
-                  {i > 0 && <span className="tl-ruler-label">{formatMs(tick)}</span>}
+                  {i > 0 && (
+                    <span className="tl-ruler-label">{formatMs(tick)}</span>
+                  )}
                 </div>
               ))}
               <div className="tl-ruler-baseline" />
@@ -398,7 +441,10 @@ function UserQueryRow({
           {steps.map((step, i) => {
             const color = COLORS[step.type];
             const leftPct = (step.startMs / totalDurationMs) * 100;
-            const widthPct = Math.max((step.durationMs / totalDurationMs) * 100, 0.3);
+            const widthPct = Math.max(
+              (step.durationMs / totalDurationMs) * 100,
+              0.3,
+            );
             return (
               <div
                 key={`${step.label}-${i}`}
@@ -429,9 +475,15 @@ function UserQueryRow({
                     }}
                     title={`${step.label}: ${formatMs(step.durationMs)} (${formatMs(step.startMs)} → ${formatMs(step.endMs)})`}
                   >
-                    <div className="tl-bar-glow" style={{ background: color.border }} />
+                    <div
+                      className="tl-bar-glow"
+                      style={{ background: color.border }}
+                    />
                     {widthPct > 8 && (
-                      <span className="tl-bar-label" style={{ color: color.border }}>
+                      <span
+                        className="tl-bar-label"
+                        style={{ color: color.border }}
+                      >
                         {formatMs(step.durationMs)}
                       </span>
                     )}
@@ -450,7 +502,13 @@ function UserQueryRow({
   );
 }
 
-function WaterfallBar({ query, widthPct }: { query: UserQuery; widthPct: number }) {
+function WaterfallBar({
+  query,
+  widthPct,
+}: {
+  query: UserQuery;
+  widthPct: number;
+}) {
   const { steps, totalDurationMs } = query;
   if (totalDurationMs <= 0 || steps.length === 0) return null;
 

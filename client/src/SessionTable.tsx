@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useCompare } from "./CompareContext";
+import { fetchJson, getErrorMessage } from "./api";
 
 interface SessionMeta {
   filename: string;
@@ -66,7 +67,10 @@ function extractShortId(base: string): string {
 
 function formatProjectInfo(dirName: string) {
   const decoded = decodeURIComponent(dirName);
-  const normalized = decoded.replace(/^--/, "").replace(/--$/, "").replace(/--/g, "/");
+  const normalized = decoded
+    .replace(/^--/, "")
+    .replace(/--$/, "")
+    .replace(/--/g, "/");
   const parts = normalized.split("/").filter(Boolean);
   return {
     title: parts[parts.length - 1] || normalized,
@@ -76,7 +80,17 @@ function formatProjectInfo(dirName: string) {
 
 function SearchIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
       <circle cx="11" cy="11" r="7" />
       <path d="m20 20-3.5-3.5" />
     </svg>
@@ -88,7 +102,10 @@ function accumulateTotals(items: SessionMeta[]) {
     inputTokens: items.reduce((sum, item) => sum + item.inputTokens, 0),
     outputTokens: items.reduce((sum, item) => sum + item.outputTokens, 0),
     cacheReadTokens: items.reduce((sum, item) => sum + item.cacheReadTokens, 0),
-    cacheWriteTokens: items.reduce((sum, item) => sum + item.cacheWriteTokens, 0),
+    cacheWriteTokens: items.reduce(
+      (sum, item) => sum + item.cacheWriteTokens,
+      0,
+    ),
     totalCost: items.reduce((sum, item) => sum + item.totalCost, 0),
     toolCalls: items.reduce((sum, item) => sum + item.toolCalls, 0),
     messageCount: items.reduce((sum, item) => sum + item.messageCount, 0),
@@ -105,32 +122,34 @@ export function SessionTable() {
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [page, setPage] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
-  const { selected, isSelected, toggleSelection, clearSelection, readyToCompare } = useCompare();
+  const {
+    selected,
+    isSelected,
+    toggleSelection,
+    clearSelection,
+    readyToCompare,
+  } = useCompare();
 
   const projectInfo = useMemo(
     () => formatProjectInfo(dirName || ""),
     [dirName],
   );
 
-  const loadSessions = () => {
+  const loadSessions = useCallback(() => {
     setLoading(true);
     setError(null);
-    fetch(`/api/projects/${encodeURIComponent(dirName!)}/sessions`)
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json();
-      })
+    fetchJson<SessionMeta[]>(`/api/projects/${encodeURIComponent(dirName!)}/sessions`)
       .then((data) => {
         setSessions(data);
         setPage(0);
       })
-      .catch((e) => setError(e.message))
+      .catch((error: unknown) => setError(getErrorMessage(error)))
       .finally(() => setLoading(false));
-  };
+  }, [dirName]);
 
   useEffect(() => {
     loadSessions();
-  }, [dirName]);
+  }, [loadSessions]);
 
   const sorted = useMemo(() => {
     const copy = [...sessions];
@@ -165,7 +184,10 @@ export function SessionTable() {
         extractShortId(base),
         session.timestamp,
         ...session.models,
-      ].join("\n").toLowerCase().includes(normalizedSearch);
+      ]
+        .join("\n")
+        .toLowerCase()
+        .includes(normalizedSearch);
     });
   }, [sorted, normalizedSearch]);
 
@@ -197,7 +219,10 @@ export function SessionTable() {
   ];
 
   const totals = useMemo(() => accumulateTotals(sessions), [sessions]);
-  const filteredTotals = useMemo(() => accumulateTotals(filteredSessions), [filteredSessions]);
+  const filteredTotals = useMemo(
+    () => accumulateTotals(filteredSessions),
+    [filteredSessions],
+  );
 
   const latestSession = useMemo(() => {
     return sessions.reduce<SessionMeta | null>((latest, session) => {
@@ -207,7 +232,10 @@ export function SessionTable() {
   }, [sessions]);
 
   const totalPages = Math.ceil(filteredSessions.length / PAGE_SIZE);
-  const pageData = filteredSessions.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  const pageData = filteredSessions.slice(
+    page * PAGE_SIZE,
+    (page + 1) * PAGE_SIZE,
+  );
 
   const rangeStart = filteredSessions.length === 0 ? 0 : page * PAGE_SIZE + 1;
   const rangeEnd = Math.min((page + 1) * PAGE_SIZE, filteredSessions.length);
@@ -234,37 +262,65 @@ export function SessionTable() {
               </span>
               {!loading && !error && (
                 <span className="compact-chip mono-text">
-                  {normalizedSearch ? `${filteredSessions.length}/${sessions.length} runs` : `${sessions.length} runs`}
+                  {normalizedSearch
+                    ? `${filteredSessions.length}/${sessions.length} runs`
+                    : `${sessions.length} runs`}
                 </span>
               )}
             </div>
-            <span className="compact-toolbar-sub mono-text" title={projectInfo.detail}>
+            <span
+              className="compact-toolbar-sub mono-text"
+              title={projectInfo.detail}
+            >
               {projectInfo.detail}
             </span>
           </div>
 
           {!loading && !error && sessions.length > 0 && (
             <div className="project-toolbar-metrics mono-text">
-              <span className="session-hero-metric">{totals.modelCount} models</span>
+              <span className="session-hero-metric">
+                {totals.modelCount} models
+              </span>
               <span className="session-hero-metric">
                 {formatTokens(totals.inputTokens + totals.outputTokens)} tokens
               </span>
-              <span className="session-hero-metric">${totals.totalCost.toFixed(2)}</span>
-              <span className="session-hero-metric">{totals.toolCalls} tools</span>
+              <span className="session-hero-metric">
+                ${totals.totalCost.toFixed(2)}
+              </span>
+              <span className="session-hero-metric">
+                {totals.toolCalls} tools
+              </span>
             </div>
           )}
         </div>
 
         <div className="compact-toolbar-right project-toolbar-actions">
           {selected.length > 0 && (
-            <span className="compact-chip mono-text">{selected.length}/2 selected</span>
+            <span className="compact-chip mono-text">
+              {selected.length}/2 selected
+            </span>
           )}
-          {readyToCompare && <Link className="btn btn-sm" to="/compare">Compare</Link>}
+          {readyToCompare && (
+            <Link className="btn btn-sm" to="/compare">
+              Compare
+            </Link>
+          )}
           {selected.length > 0 && (
-            <button className="btn btn-sm" onClick={clearSelection}>Clear</button>
+            <button className="btn btn-sm" onClick={clearSelection}>
+              Clear
+            </button>
           )}
           <button className="btn btn-sm btn-accent" onClick={loadSessions}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
               <path d="M1 4v6h6" />
               <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
             </svg>
@@ -282,7 +338,9 @@ export function SessionTable() {
           </div>
           <div className="overview-metric">
             <span className="overview-label">Models</span>
-            <span className="overview-value mono-text">{totals.modelCount}</span>
+            <span className="overview-value mono-text">
+              {totals.modelCount}
+            </span>
             <span className="overview-detail">Unique model switches seen</span>
           </div>
           <div className="overview-metric">
@@ -294,8 +352,12 @@ export function SessionTable() {
           </div>
           <div className="overview-metric">
             <span className="overview-label">Total cost</span>
-            <span className="overview-value mono-text">${totals.totalCost.toFixed(2)}</span>
-            <span className="overview-detail">Across cached session metadata</span>
+            <span className="overview-value mono-text">
+              ${totals.totalCost.toFixed(2)}
+            </span>
+            <span className="overview-detail">
+              Across cached session metadata
+            </span>
           </div>
           <div className="overview-metric">
             <span className="overview-label">Latest run</span>
@@ -303,7 +365,9 @@ export function SessionTable() {
               {latestSession ? formatTimestamp(latestSession.timestamp) : "—"}
             </span>
             <span className="overview-detail">
-              {latestSession ? `${latestSession.toolCalls} tools · ${latestSession.messageCount} messages` : "No activity yet"}
+              {latestSession
+                ? `${latestSession.toolCalls} tools · ${latestSession.messageCount} messages`
+                : "No activity yet"}
             </span>
           </div>
         </section>
@@ -313,7 +377,9 @@ export function SessionTable() {
         <div className="panel-header table-panel-header">
           <div className="table-panel-heading">
             <div className="panel-title">Session index</div>
-            <div className="table-panel-summary mono-text">{sessionSummary}</div>
+            <div className="table-panel-summary mono-text">
+              {sessionSummary}
+            </div>
           </div>
 
           <div className="table-panel-tools">
@@ -353,15 +419,24 @@ export function SessionTable() {
           </div>
         )}
 
-        {error && <div className="status-box error">Failed to load sessions: {error}</div>}
+        {error && (
+          <div className="status-box error">
+            Failed to load sessions: {error}
+          </div>
+        )}
 
         {!loading && !error && sessions.length === 0 && (
           <div className="status-box">No sessions found for this project.</div>
         )}
 
-        {!loading && !error && sessions.length > 0 && filteredSessions.length === 0 && (
-          <div className="status-box">No sessions match “{searchQuery.trim()}”.</div>
-        )}
+        {!loading &&
+          !error &&
+          sessions.length > 0 &&
+          filteredSessions.length === 0 && (
+            <div className="status-box">
+              No sessions match “{searchQuery.trim()}”.
+            </div>
+          )}
 
         {!loading && pageData.length > 0 && (
           <>
@@ -389,7 +464,10 @@ export function SessionTable() {
                   {pageData.map((session) => {
                     const base = session.filename.replace(/\.jsonl$/, "");
                     const shortId = extractShortId(base);
-                    const isChecked = isSelected({ dirName: dirName!, filename: session.filename });
+                    const isChecked = isSelected({
+                      dirName: dirName!,
+                      filename: session.filename,
+                    });
                     return (
                       <tr key={session.filename}>
                         <td className="session-id-cell">
@@ -406,7 +484,11 @@ export function SessionTable() {
                                   timestamp: session.timestamp,
                                 })
                               }
-                              title={isChecked ? "Remove from compare" : "Select for compare"}
+                              title={
+                                isChecked
+                                  ? "Remove from compare"
+                                  : "Select for compare"
+                              }
                             />
                             <Link
                               to={`/project/${encodeURIComponent(dirName!)}/session/${encodeURIComponent(session.filename)}`}
@@ -417,8 +499,12 @@ export function SessionTable() {
                             </Link>
                           </div>
                         </td>
-                        <td className="session-time-cell">{formatTimestamp(session.timestamp)}</td>
-                        <td className="num">{formatDuration(session.durationSeconds)}</td>
+                        <td className="session-time-cell">
+                          {formatTimestamp(session.timestamp)}
+                        </td>
+                        <td className="num">
+                          {formatDuration(session.durationSeconds)}
+                        </td>
                         <td>
                           <div className="session-models">
                             {session.models.map((model) => (
@@ -428,11 +514,21 @@ export function SessionTable() {
                             ))}
                           </div>
                         </td>
-                        <td className="num">{formatTokens(session.inputTokens)}</td>
-                        <td className="num">{formatTokens(session.outputTokens)}</td>
-                        <td className="num">{formatTokens(session.cacheReadTokens)}</td>
-                        <td className="num">{formatTokens(session.cacheWriteTokens)}</td>
-                        <td className="num cost-cell">${session.totalCost.toFixed(4)}</td>
+                        <td className="num">
+                          {formatTokens(session.inputTokens)}
+                        </td>
+                        <td className="num">
+                          {formatTokens(session.outputTokens)}
+                        </td>
+                        <td className="num">
+                          {formatTokens(session.cacheReadTokens)}
+                        </td>
+                        <td className="num">
+                          {formatTokens(session.cacheWriteTokens)}
+                        </td>
+                        <td className="num cost-cell">
+                          ${session.totalCost.toFixed(4)}
+                        </td>
                         <td className="num">{session.toolCalls}</td>
                         <td className="num">{session.messageCount}</td>
                       </tr>
@@ -445,7 +541,8 @@ export function SessionTable() {
             {totalPages > 1 && (
               <div className="pagination">
                 <div className="pagination-summary">
-                  Page {page + 1} of {totalPages} ({rangeStart}–{rangeEnd} of {filteredSessions.length})
+                  Page {page + 1} of {totalPages} ({rangeStart}–{rangeEnd} of{" "}
+                  {filteredSessions.length})
                 </div>
                 <div className="pagination-controls">
                   <button
