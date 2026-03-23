@@ -23,6 +23,33 @@ describe("server/sessions", () => {
     ]);
   });
 
+  it("preserves message entries with legacy string content", () => {
+    const content = [
+      '{"type":"message","timestamp":"2024-01-01T00:00:00.000Z","message":{"role":"user","content":"hello"}}',
+    ].join("\n");
+
+    expect(__private__.parseJsonlLines(content)).toEqual([
+      {
+        type: "message",
+        timestamp: "2024-01-01T00:00:00.000Z",
+        message: { role: "user" },
+      },
+    ]);
+  });
+
+  it("drops invalid timestamps during parsing instead of dropping entries", () => {
+    const content = [
+      '{"type":"message","timestamp":"not-a-date","message":{"role":"assistant","content":[]}}',
+    ].join("\n");
+
+    expect(__private__.parseJsonlLines(content)).toEqual([
+      {
+        type: "message",
+        message: { role: "assistant", content: [] },
+      },
+    ]);
+  });
+
   it("reads cwd from the session header", () => {
     const content = [
       '{"type":"session","cwd":"/Users/test/project"}',
@@ -81,6 +108,27 @@ describe("server/sessions", () => {
       totalCost: 0.1235,
       toolCalls: 1,
       messageCount: 3,
+    });
+  });
+
+  it("counts legacy string-content messages in metadata", () => {
+    const entries = __private__.parseJsonlLines([
+      '{"type":"message","timestamp":"2024-01-01T00:00:00.000Z","message":{"role":"user","content":"hello"}}',
+      '{"type":"message","timestamp":"2024-01-01T00:00:01.000Z","message":{"role":"assistant","content":"world"}}',
+    ].join("\n"));
+
+    expect(__private__.aggregateMetadata(entries, "session.jsonl")).toEqual({
+      filename: "session.jsonl",
+      timestamp: "2024-01-01T00:00:00.000Z",
+      durationSeconds: 1,
+      models: [],
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      totalCost: 0,
+      toolCalls: 0,
+      messageCount: 2,
     });
   });
 
@@ -152,18 +200,12 @@ describe("server/sessions", () => {
     ]);
   });
 
-  it("ignores message entries without timestamps when computing spans", () => {
-    const entries = [
-      {
-        type: "message",
-        message: { role: "user", content: [] },
-      },
-      {
-        type: "message",
-        timestamp: "2024-01-01T00:00:02.000Z",
-        message: { role: "assistant", model: "gpt-4.1", content: [] },
-      },
-    ];
+  it("ignores message entries without valid timestamps when computing spans", () => {
+    const entries = __private__.parseJsonlLines([
+      '{"type":"message","timestamp":"not-a-date","message":{"role":"user","content":[]}}',
+      '{"type":"message","message":{"role":"user","content":[]}}',
+      '{"type":"message","timestamp":"2024-01-01T00:00:02.000Z","message":{"role":"assistant","model":"gpt-4.1","content":[]}}',
+    ].join("\n"));
 
     expect(__private__.computeSpans(entries)).toEqual([
       {

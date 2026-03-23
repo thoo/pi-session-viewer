@@ -67,6 +67,18 @@ const contentBlockSchema = z
   })
   .passthrough();
 
+function normalizeOptionalTimestamp(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length === 0) {
+    return undefined;
+  }
+
+  return Number.isNaN(Date.parse(value)) ? undefined : value;
+}
+
+function normalizeMessageContent(value: unknown): unknown {
+  return Array.isArray(value) ? value : undefined;
+}
+
 const messageUsageSchema = z
   .object({
     input: z.number().optional(),
@@ -88,14 +100,20 @@ const messageSchema = z
     model: z.string().optional(),
     toolCallId: z.string().optional(),
     usage: messageUsageSchema.optional(),
-    content: z.array(contentBlockSchema).optional(),
+    content: z.preprocess(
+      normalizeMessageContent,
+      z.array(contentBlockSchema).optional(),
+    ),
   })
   .passthrough();
 
 const sessionEntrySchema = z
   .object({
     type: z.string().optional(),
-    timestamp: z.string().optional(),
+    timestamp: z.preprocess(
+      normalizeOptionalTimestamp,
+      z.string().optional(),
+    ),
     modelId: z.string().optional(),
     cwd: z.string().optional(),
     message: messageSchema.optional(),
@@ -322,7 +340,7 @@ function getSessionStart(
     return new Date(firstMessageTs).getTime();
   }
 
-  const firstEntryTs = entries[0]?.timestamp;
+  const firstEntryTs = entries.find((entry) => entry.timestamp)?.timestamp;
   return firstEntryTs ? new Date(firstEntryTs).getTime() : 0;
 }
 

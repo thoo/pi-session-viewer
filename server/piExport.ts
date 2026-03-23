@@ -266,10 +266,9 @@ function patchExportHtml(html: string, colors: ThemeExportColors): string {
 
   const existingBlock = new RegExp(
     `<!-- ${THEME_OVERRIDE_MARKER}:start -->[\\s\\S]*?<!-- ${THEME_OVERRIDE_MARKER}:end -->`,
-    "g",
   );
 
-  if (existingBlock.test(html)) {
+  if (html.includes(`<!-- ${THEME_OVERRIDE_MARKER}:start -->`)) {
     return html.replace(existingBlock, overrideBlock);
   }
 
