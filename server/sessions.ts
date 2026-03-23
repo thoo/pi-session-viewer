@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile, stat, mkdir } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { existsSync } from "node:fs";
 import { exportSessionHtml, getThemeCacheToken } from "./piExport.js";
@@ -29,6 +29,18 @@ export interface SessionMetadata {
   totalCost: number;
   toolCalls: number;
   messageCount: number;
+}
+
+export interface SessionSearchMatch {
+  filename: string;
+  timestamp: string;
+  models: string[];
+}
+
+export interface ProjectSearchResult extends ProjectInfo {
+  projectMatches: boolean;
+  matchingSessions: SessionSearchMatch[];
+  totalSessionMatches: number;
 }
 
 export interface TraceSpan {
@@ -110,6 +122,10 @@ function readCwdFromHeader(content: string): string | null {
     // ignore
   }
   return null;
+}
+
+function normalizeSearchText(value: string): string {
+  return value.trim().toLowerCase();
 }
 
 function aggregateMetadata(
@@ -335,6 +351,75 @@ export async function scanProjects(): Promise<ProjectInfo[]> {
   }
 
   return projects.sort((a, b) => a.displayPath.localeCompare(b.displayPath));
+}
+
+export async function searchProjectsAndSessions(
+  query: string
+): Promise<ProjectSearchResult[]> {
+  const normalizedQuery = normalizeSearchText(query);
+  if (!normalizedQuery) {
+    return [];
+  }
+
+  const projects = await scanProjects();
+  const results: ProjectSearchResult[] = [];
+
+  for (const project of projects) {
+    const projectLabel = basename(project.displayPath) || project.displayPath;
+    const projectMatches = normalizeSearchText(
+      `${project.displayPath}\n${project.dirName}\n${projectLabel}`
+    ).includes(normalizedQuery);
+
+    const dirPath = resolveSessionDir(project.dirName);
+    if (!dirPath || !existsSync(dirPath)) continue;
+
+    const files = await readdir(dirPath);
+    const jsonlFiles = files.filter((f) => f.endsWith(".jsonl"));
+    const matchingSessions: SessionSearchMatch[] = [];
+
+    for (const filename of jsonlFiles) {
+      const baseName = filename.replace(/\.jsonl$/, "");
+      const sessionMatches = normalizeSearchText(
+        `${filename}\n${baseName}`
+      ).includes(normalizedQuery);
+
+      if (!sessionMatches) continue;
+
+      const metadata = await readSessionMetadata(join(dirPath, filename), filename);
+      matchingSessions.push({
+        filename,
+        timestamp: metadata?.timestamp ?? "",
+        models: metadata?.models ?? [],
+      });
+    }
+
+    matchingSessions.sort((a, b) => {
+      const timeDiff = new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
+      if (Number.isFinite(timeDiff) && timeDiff !== 0) return timeDiff;
+      return a.filename.localeCompare(b.filename);
+    });
+
+    if (!projectMatches && matchingSessions.length === 0) {
+      continue;
+    }
+
+    results.push({
+      ...project,
+      projectMatches,
+      matchingSessions: matchingSessions.slice(0, 12),
+      totalSessionMatches: matchingSessions.length,
+    });
+  }
+
+  return results.sort((a, b) => {
+    if (a.projectMatches !== b.projectMatches) {
+      return a.projectMatches ? -1 : 1;
+    }
+    if (a.totalSessionMatches !== b.totalSessionMatches) {
+      return b.totalSessionMatches - a.totalSessionMatches;
+    }
+    return a.displayPath.localeCompare(b.displayPath);
+  });
 }
 
 async function readSessionMetadata(filePath: string, filename: string): Promise<SessionMetadata | null> {

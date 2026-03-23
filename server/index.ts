@@ -2,6 +2,7 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import {
   scanProjects,
+  searchProjectsAndSessions,
   getSessionsForProject,
   getSessionMetadata,
   getSessionSpans,
@@ -19,6 +20,22 @@ app.get("/api/projects", async (_req, res) => {
   try {
     const projects = await scanProjects();
     res.json(projects);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/search", async (req, res) => {
+  const query = String(req.query.q ?? "").trim();
+
+  if (!query) {
+    res.json([]);
+    return;
+  }
+
+  try {
+    const results = await searchProjectsAndSessions(query);
+    res.json(results);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
