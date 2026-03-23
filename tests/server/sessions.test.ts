@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { __private__, sanitizeParam } from "../../server/sessions";
+import {
+  aggregateMetadata,
+  computeSpans,
+  parseJsonlLines,
+  readCwdFromHeader,
+} from "../../server/sessionCore";
+import { sanitizeParam } from "../../server/sessions";
 
 describe("server/sessions", () => {
   it("rejects unsafe path params", () => {
@@ -17,7 +23,7 @@ describe("server/sessions", () => {
       "not-json",
     ].join("\n");
 
-    expect(__private__.parseJsonlLines(content)).toEqual([
+    expect(parseJsonlLines(content)).toEqual([
       { type: "session", cwd: "/tmp/demo" },
       { type: "message", timestamp: "2024-01-01T00:00:00.000Z" },
     ]);
@@ -28,7 +34,7 @@ describe("server/sessions", () => {
       '{"type":"message","timestamp":"2024-01-01T00:00:00.000Z","message":{"role":"user","content":"hello"}}',
     ].join("\n");
 
-    expect(__private__.parseJsonlLines(content)).toEqual([
+    expect(parseJsonlLines(content)).toEqual([
       {
         type: "message",
         timestamp: "2024-01-01T00:00:00.000Z",
@@ -42,7 +48,7 @@ describe("server/sessions", () => {
       '{"type":"message","timestamp":"not-a-date","message":{"role":"assistant","content":[]}}',
     ].join("\n");
 
-    expect(__private__.parseJsonlLines(content)).toEqual([
+    expect(parseJsonlLines(content)).toEqual([
       {
         type: "message",
         message: { role: "assistant", content: [] },
@@ -56,7 +62,7 @@ describe("server/sessions", () => {
       '{"type":"message","timestamp":"2024-01-01T00:00:00.000Z"}',
     ].join("\n");
 
-    expect(__private__.readCwdFromHeader(content)).toBe("/Users/test/project");
+    expect(readCwdFromHeader(content)).toBe("/Users/test/project");
   });
 
   it("aggregates metadata from assistant usage and tool calls", () => {
@@ -96,7 +102,7 @@ describe("server/sessions", () => {
       },
     ];
 
-    expect(__private__.aggregateMetadata(entries, "session.jsonl")).toEqual({
+    expect(aggregateMetadata(entries, "session.jsonl")).toEqual({
       filename: "session.jsonl",
       timestamp: "2024-01-01T00:00:00.000Z",
       durationSeconds: 4,
@@ -112,12 +118,12 @@ describe("server/sessions", () => {
   });
 
   it("counts legacy string-content messages in metadata", () => {
-    const entries = __private__.parseJsonlLines([
+    const entries = parseJsonlLines([
       '{"type":"message","timestamp":"2024-01-01T00:00:00.000Z","message":{"role":"user","content":"hello"}}',
       '{"type":"message","timestamp":"2024-01-01T00:00:01.000Z","message":{"role":"assistant","content":"world"}}',
     ].join("\n"));
 
-    expect(__private__.aggregateMetadata(entries, "session.jsonl")).toEqual({
+    expect(aggregateMetadata(entries, "session.jsonl")).toEqual({
       filename: "session.jsonl",
       timestamp: "2024-01-01T00:00:00.000Z",
       durationSeconds: 1,
@@ -160,7 +166,7 @@ describe("server/sessions", () => {
       },
     ];
 
-    expect(__private__.computeSpans(entries)).toEqual([
+    expect(computeSpans(entries)).toEqual([
       {
         id: "span-0",
         type: "user",
@@ -201,13 +207,13 @@ describe("server/sessions", () => {
   });
 
   it("ignores message entries without valid timestamps when computing spans", () => {
-    const entries = __private__.parseJsonlLines([
+    const entries = parseJsonlLines([
       '{"type":"message","timestamp":"not-a-date","message":{"role":"user","content":[]}}',
       '{"type":"message","message":{"role":"user","content":[]}}',
       '{"type":"message","timestamp":"2024-01-01T00:00:02.000Z","message":{"role":"assistant","model":"gpt-4.1","content":[]}}',
     ].join("\n"));
 
-    expect(__private__.computeSpans(entries)).toEqual([
+    expect(computeSpans(entries)).toEqual([
       {
         id: "span-0",
         type: "assistant",

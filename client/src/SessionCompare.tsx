@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useCompare, type CompareSessionRef } from "./CompareContext";
+import { fetchJson, fetchText, getErrorMessage } from "./api";
 import { TraceTimeline } from "./TraceTimeline";
 
 interface SessionMeta {
@@ -187,31 +188,25 @@ function ComparePane({ session }: { session: CompareSessionRef }) {
   useEffect(() => {
     setMetaLoading(true);
     setMetaError(null);
-    fetch(`/api/projects/${encodeURIComponent(session.dirName)}/sessions`)
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json();
-      })
-      .then((items: SessionMeta[]) => {
+    fetchJson<SessionMeta[]>(
+      `/api/projects/${encodeURIComponent(session.dirName)}/sessions`,
+    )
+      .then((items) => {
         const match =
           items.find((item) => item.filename === session.filename) ?? null;
         if (!match) throw new Error("Session metadata not found");
         setMeta(match);
       })
-      .catch((e) => setMetaError(e.message))
+      .catch((error: unknown) => setMetaError(getErrorMessage(error)))
       .finally(() => setMetaLoading(false));
   }, [session.dirName, session.filename]);
 
   useEffect(() => {
     setSpansLoading(true);
     setSpansError(null);
-    fetch(`${apiBase}/spans`)
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json();
-      })
+    fetchJson<TraceSpan[]>(`${apiBase}/spans`)
       .then(setSpans)
-      .catch((e) => setSpansError(e.message))
+      .catch((error: unknown) => setSpansError(getErrorMessage(error)))
       .finally(() => setSpansLoading(false));
   }, [apiBase]);
 
@@ -222,18 +217,14 @@ function ComparePane({ session }: { session: CompareSessionRef }) {
     setExportLoading(true);
     setExportError(null);
 
-    fetch(`${apiBase}/export`)
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.text();
-      })
+    fetchText(`${apiBase}/export`)
       .then((html) => {
         const themed = injectThemeIntoHtml(html);
         const blob = new Blob([themed], { type: "text/html" });
         objectUrl = URL.createObjectURL(blob);
         setExportUrl(objectUrl);
       })
-      .catch((e) => setExportError(e.message))
+      .catch((error: unknown) => setExportError(getErrorMessage(error)))
       .finally(() => setExportLoading(false));
 
     return () => {

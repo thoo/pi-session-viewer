@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useCompare } from "./CompareContext";
+import { fetchJson, getErrorMessage } from "./api";
 
 interface SessionMeta {
   filename: string;
@@ -137,16 +138,12 @@ export function SessionTable() {
   const loadSessions = useCallback(() => {
     setLoading(true);
     setError(null);
-    fetch(`/api/projects/${encodeURIComponent(dirName!)}/sessions`)
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json();
-      })
+    fetchJson<SessionMeta[]>(`/api/projects/${encodeURIComponent(dirName!)}/sessions`)
       .then((data) => {
         setSessions(data);
         setPage(0);
       })
-      .catch((e) => setError(e.message))
+      .catch((error: unknown) => setError(getErrorMessage(error)))
       .finally(() => setLoading(false));
   }, [dirName]);
 

@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { __private__ } from "../../server/piExport";
+import {
+  ansi256ToHex,
+  patchExportHtml,
+  resolveThemeColorValue,
+} from "../../server/piExportCore";
 
 describe("server/piExport", () => {
   it("converts ANSI palette values to hex", () => {
-    expect(__private__.ansi256ToHex(1)).toBe("#800000");
-    expect(__private__.ansi256ToHex(21)).toBe("#0000ff");
-    expect(__private__.ansi256ToHex(232)).toBe("#080808");
+    expect(ansi256ToHex(1)).toBe("#800000");
+    expect(ansi256ToHex(21)).toBe("#0000ff");
+    expect(ansi256ToHex(232)).toBe("#080808");
   });
 
   it("resolves nested theme variables", () => {
@@ -15,18 +19,18 @@ describe("server/piExport", () => {
       accent: "#ff00ff",
     };
 
-    expect(__private__.resolveThemeColorValue("$surface", vars)).toBe(
+    expect(resolveThemeColorValue("$surface", vars)).toBe(
       "#0000ff",
     );
-    expect(__private__.resolveThemeColorValue("accent", vars)).toBe("#ff00ff");
-    expect(__private__.resolveThemeColorValue("rgba(0, 0, 0, 0.5)", vars)).toBe(
+    expect(resolveThemeColorValue("accent", vars)).toBe("#ff00ff");
+    expect(resolveThemeColorValue("rgba(0, 0, 0, 0.5)", vars)).toBe(
       "rgba(0, 0, 0, 0.5)",
     );
   });
 
   it("patches exported HTML with theme overrides", () => {
     const html = "<html><head></head><body>Hello</body></html>";
-    const patched = __private__.patchExportHtml(html, {
+    const patched = patchExportHtml(html, {
       pageBg: "#111111",
       cardBg: "#222222",
       infoBg: "#333333",
@@ -48,7 +52,7 @@ describe("server/piExport", () => {
       "</head><body>Hello</body></html>",
     ].join("\n");
 
-    const patched = __private__.patchExportHtml(html, { pageBg: "#abcdef" });
+    const patched = patchExportHtml(html, { pageBg: "#abcdef" });
 
     expect(
       patched.match(/pi-session-viewer-theme-override:start/g),

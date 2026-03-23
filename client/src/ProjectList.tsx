@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { fetchJson, getErrorMessage } from "./api";
 
 interface Project {
   dirName: string;
@@ -146,13 +147,9 @@ export function ProjectList() {
   const [searchError, setSearchError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch("/api/projects")
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json();
-      })
+    fetchJson<Project[]>("/api/projects")
       .then(setProjects)
-      .catch((e) => setError(e.message))
+      .catch((error: unknown) => setError(getErrorMessage(error)))
       .finally(() => setLoading(false));
   }, []);
 
@@ -193,17 +190,16 @@ export function ProjectList() {
       setSearchLoading(true);
       setSearchError(null);
 
-      fetch(`/api/search?q=${encodeURIComponent(trimmedSearch)}`, {
-        signal: controller.signal,
-      })
-        .then((r) => {
-          if (!r.ok) throw new Error(`HTTP ${r.status}`);
-          return r.json();
-        })
+      fetchJson<SearchProjectResult[]>(
+        `/api/search?q=${encodeURIComponent(trimmedSearch)}`,
+        { signal: controller.signal },
+      )
         .then(setSearchResults)
-        .catch((e) => {
-          if (e.name === "AbortError") return;
-          setSearchError(e.message);
+        .catch((error: unknown) => {
+          if (error instanceof DOMException && error.name === "AbortError") {
+            return;
+          }
+          setSearchError(getErrorMessage(error));
         })
         .finally(() => {
           if (!controller.signal.aborted) {

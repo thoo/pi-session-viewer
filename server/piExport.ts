@@ -14,20 +14,18 @@ import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import { logger } from "./logger.js";
-
-interface ThemeExportColors {
-  pageBg?: string;
-  cardBg?: string;
-  infoBg?: string;
-}
+import {
+  patchExportHtml,
+  resolveThemeColorValue,
+  sanitizeToken,
+  type ThemeExportColors,
+} from "./piExportCore.js";
 
 interface ThemeConfig {
   name?: string;
   colors: ThemeExportColors;
   cacheToken: string;
 }
-
-type ThemeColorValue = string | number | undefined;
 
 type PiTheme = {
   name?: string;
@@ -56,8 +54,9 @@ const themeFileSchema = z.object({
     })
     .optional(),
 });
-
-const THEME_OVERRIDE_MARKER = "pi-session-viewer-theme-override";
+const packageJsonSchema = z.object({
+  name: z.string().optional(),
+});
 
 const themeConfigCache = new Map<
   string,
@@ -111,7 +110,7 @@ async function readThemeConfig(themePath: string): Promise<ThemeConfig> {
   }
 
   const content = await readFile(themePath, "utf-8");
-  const rawTheme = JSON.parse(content) as unknown;
+  const rawTheme: unknown = JSON.parse(content);
   const parsedTheme = themeFileSchema.safeParse(rawTheme);
 
   if (!parsedTheme.success) {
@@ -149,134 +148,6 @@ async function readThemeConfig(themePath: string): Promise<ThemeConfig> {
 
   themeConfigCache.set(themePath, { mtimeMs: fileStat.mtimeMs, config });
   return config;
-}
-
-function resolveThemeColorValue(
-  value: ThemeColorValue,
-  vars: Record<string, ThemeColorValue>,
-  seen = new Set<string>(),
-): string | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-
-  if (typeof value === "number") {
-    return ansi256ToHex(value);
-  }
-
-  const trimmed = value.trim();
-  if (
-    trimmed === "" ||
-    trimmed.startsWith("#") ||
-    trimmed.startsWith("rgb(") ||
-    trimmed.startsWith("rgba(") ||
-    trimmed.startsWith("hsl(") ||
-    trimmed.startsWith("hsla(")
-  ) {
-    return trimmed;
-  }
-
-  const key = trimmed.startsWith("$") ? trimmed.slice(1) : trimmed;
-  if (!(key in vars)) {
-    return trimmed;
-  }
-
-  if (seen.has(key)) {
-    throw new Error(`Circular theme variable reference: ${key}`);
-  }
-
-  seen.add(key);
-  const resolved = resolveThemeColorValue(vars[key], vars, seen);
-  seen.delete(key);
-  return resolved;
-}
-
-function ansi256ToHex(index: number): string {
-  const basicColors = [
-    "#000000",
-    "#800000",
-    "#008000",
-    "#808000",
-    "#000080",
-    "#800080",
-    "#008080",
-    "#c0c0c0",
-    "#808080",
-    "#ff0000",
-    "#00ff00",
-    "#ffff00",
-    "#0000ff",
-    "#ff00ff",
-    "#00ffff",
-    "#ffffff",
-  ];
-
-  if (index < 16) {
-    return basicColors[index] ?? "#000000";
-  }
-
-  if (index < 232) {
-    const cubeIndex = index - 16;
-    const r = Math.floor(cubeIndex / 36);
-    const g = Math.floor((cubeIndex % 36) / 6);
-    const b = cubeIndex % 6;
-    const toHex = (n: number) =>
-      (n === 0 ? 0 : 55 + n * 40).toString(16).padStart(2, "0");
-    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
-  }
-
-  const gray = 8 + (index - 232) * 10;
-  const grayHex = gray.toString(16).padStart(2, "0");
-  return `#${grayHex}${grayHex}${grayHex}`;
-}
-
-function sanitizeToken(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
-}
-
-function patchExportHtml(html: string, colors: ThemeExportColors): string {
-  const declarations: string[] = [];
-
-  if (colors.pageBg) {
-    declarations.push(`--exportPageBg: ${colors.pageBg};`);
-    declarations.push(`--body-bg: ${colors.pageBg};`);
-  }
-  if (colors.cardBg) {
-    declarations.push(`--exportCardBg: ${colors.cardBg};`);
-    declarations.push(`--container-bg: ${colors.cardBg};`);
-  }
-  if (colors.infoBg) {
-    declarations.push(`--exportInfoBg: ${colors.infoBg};`);
-    declarations.push(`--info-bg: ${colors.infoBg};`);
-  }
-
-  if (declarations.length === 0) {
-    return html;
-  }
-
-  const overrideBlock = [
-    `<!-- ${THEME_OVERRIDE_MARKER}:start -->`,
-    `<style id="${THEME_OVERRIDE_MARKER}">`,
-    ":root {",
-    ...declarations.map((line) => `  ${line}`),
-    "}",
-    "</style>",
-    `<!-- ${THEME_OVERRIDE_MARKER}:end -->`,
-  ].join("\n");
-
-  const existingBlock = new RegExp(
-    `<!-- ${THEME_OVERRIDE_MARKER}:start -->[\\s\\S]*?<!-- ${THEME_OVERRIDE_MARKER}:end -->`,
-  );
-
-  if (html.includes(`<!-- ${THEME_OVERRIDE_MARKER}:start -->`)) {
-    return html.replace(existingBlock, overrideBlock);
-  }
-
-  if (html.includes("</head>")) {
-    return html.replace("</head>", `${overrideBlock}\n</head>`);
-  }
-
-  return `${overrideBlock}\n${html}`;
 }
 
 async function exportViaPiInternals(
@@ -353,6 +224,31 @@ async function findGeneratedHtml(dir: string, stdout: string): Promise<string> {
   );
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isPiExportModule(
+  value: unknown,
+): value is { exportFromFile: PiInternals["exportFromFile"] } {
+  return isRecord(value) && typeof value.exportFromFile === "function";
+}
+
+function isPiThemeModule(
+  value: unknown,
+): value is {
+  loadThemeFromPath: PiInternals["loadThemeFromPath"];
+  setRegisteredThemes: PiInternals["setRegisteredThemes"];
+  initTheme?: PiInternals["initTheme"];
+} {
+  return (
+    isRecord(value) &&
+    typeof value.loadThemeFromPath === "function" &&
+    typeof value.setRegisteredThemes === "function" &&
+    (value.initTheme === undefined || typeof value.initTheme === "function")
+  );
+}
+
 async function loadPiInternals(): Promise<PiInternals> {
   if (!piInternalsPromise) {
     piInternalsPromise = (async () => {
@@ -379,31 +275,29 @@ async function loadPiInternals(): Promise<PiInternals> {
         );
       }
 
-      const [exportModule, themeModule] = await Promise.all([
-        import(pathToFileURL(exportModulePath).href),
-        import(pathToFileURL(themeModulePath).href),
-      ]);
+      const exportModulePromise: Promise<unknown> = import(
+        pathToFileURL(exportModulePath).href,
+      );
+      const themeModulePromise: Promise<unknown> = import(
+        pathToFileURL(themeModulePath).href,
+      );
+      const rawExportModule = await exportModulePromise;
+      const rawThemeModule = await themeModulePromise;
 
-      if (typeof exportModule.exportFromFile !== "function") {
+      if (!isPiExportModule(rawExportModule)) {
         throw new Error("Pi export module does not expose exportFromFile()");
       }
-      if (typeof themeModule.loadThemeFromPath !== "function") {
-        throw new Error("Pi theme module does not expose loadThemeFromPath()");
-      }
-      if (typeof themeModule.setRegisteredThemes !== "function") {
+      if (!isPiThemeModule(rawThemeModule)) {
         throw new Error(
-          "Pi theme module does not expose setRegisteredThemes()",
+          "Pi theme module does not expose the required theme APIs",
         );
       }
 
       return {
-        exportFromFile: exportModule.exportFromFile,
-        loadThemeFromPath: themeModule.loadThemeFromPath,
-        setRegisteredThemes: themeModule.setRegisteredThemes,
-        initTheme:
-          typeof themeModule.initTheme === "function"
-            ? themeModule.initTheme
-            : undefined,
+        exportFromFile: rawExportModule.exportFromFile,
+        loadThemeFromPath: rawThemeModule.loadThemeFromPath,
+        setRegisteredThemes: rawThemeModule.setRegisteredThemes,
+        initTheme: rawThemeModule.initTheme,
       } satisfies PiInternals;
     })().catch((error) => {
       piInternalsPromise = null;
@@ -429,9 +323,7 @@ async function resolvePiPackageRoot(): Promise<string> {
     () => null,
   );
   if (globalModulesRoot) {
-    candidates.push(
-      join(globalModulesRoot, "@mariozechner", "pi-coding-agent"),
-    );
+    candidates.push(join(globalModulesRoot, "@mariozechner", "pi-coding-agent"));
   }
 
   for (const candidate of dedupe(candidates)) {
@@ -484,12 +376,14 @@ async function isPiPackageRoot(candidate: string): Promise<boolean> {
   }
 
   try {
-    const packageJson = JSON.parse(
+    const rawPackageJson: unknown = JSON.parse(
       await readFile(packageJsonPath, "utf-8"),
-    ) as {
-      name?: string;
-    };
-    return packageJson.name === "@mariozechner/pi-coding-agent";
+    );
+    const parsedPackageJson = packageJsonSchema.safeParse(rawPackageJson);
+    return (
+      parsedPackageJson.success &&
+      parsedPackageJson.data.name === "@mariozechner/pi-coding-agent"
+    );
   } catch {
     return false;
   }
@@ -541,7 +435,9 @@ function runProcess(
       stdout: string;
       stderr: string;
     }) => {
-      if (finished) return;
+      if (finished) {
+        return;
+      }
       finished = true;
       cleanup();
       resolve(result);
@@ -555,7 +451,9 @@ function runProcess(
     });
 
     proc.on("error", (error) => {
-      if (finished) return;
+      if (finished) {
+        return;
+      }
       finished = true;
       cleanup();
       reject(error);
@@ -567,7 +465,9 @@ function runProcess(
 
     const timer = options.timeoutMs
       ? setTimeout(() => {
-          if (finished) return;
+          if (finished) {
+            return;
+          }
           finished = true;
           proc.kill();
           reject(
@@ -577,10 +477,3 @@ function runProcess(
       : undefined;
   });
 }
-
-export const __private__ = {
-  ansi256ToHex,
-  patchExportHtml,
-  resolveThemeColorValue,
-  sanitizeToken,
-};

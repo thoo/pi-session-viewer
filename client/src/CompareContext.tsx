@@ -31,6 +31,32 @@ function sameSession(a: CompareSessionRef, b: CompareSessionRef) {
   return a.dirName === b.dirName && a.filename === b.filename;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isCompareSessionRef(value: unknown): value is CompareSessionRef {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return (
+    typeof value.dirName === "string" &&
+    typeof value.filename === "string" &&
+    (value.projectTitle === undefined || typeof value.projectTitle === "string") &&
+    (value.timestamp === undefined || typeof value.timestamp === "string")
+  );
+}
+
+function parseStoredSelection(raw: string): CompareSessionRef[] {
+  const parsed: unknown = JSON.parse(raw);
+  if (!Array.isArray(parsed)) {
+    return [];
+  }
+
+  return parsed.filter(isCompareSessionRef).slice(0, 2);
+}
+
 export function CompareProvider({ children }: { children: ReactNode }) {
   const [selected, setSelected] = useState<CompareSessionRef[]>([]);
 
@@ -38,10 +64,7 @@ export function CompareProvider({ children }: { children: ReactNode }) {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return;
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        setSelected(parsed.slice(0, 2));
-      }
+      setSelected(parseStoredSelection(raw));
     } catch {
       // Ignore invalid saved state
     }
