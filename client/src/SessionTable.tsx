@@ -74,6 +74,28 @@ function formatProjectInfo(dirName: string) {
   };
 }
 
+function SearchIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="11" cy="11" r="7" />
+      <path d="m20 20-3.5-3.5" />
+    </svg>
+  );
+}
+
+function accumulateTotals(items: SessionMeta[]) {
+  return {
+    inputTokens: items.reduce((sum, item) => sum + item.inputTokens, 0),
+    outputTokens: items.reduce((sum, item) => sum + item.outputTokens, 0),
+    cacheReadTokens: items.reduce((sum, item) => sum + item.cacheReadTokens, 0),
+    cacheWriteTokens: items.reduce((sum, item) => sum + item.cacheWriteTokens, 0),
+    totalCost: items.reduce((sum, item) => sum + item.totalCost, 0),
+    toolCalls: items.reduce((sum, item) => sum + item.toolCalls, 0),
+    messageCount: items.reduce((sum, item) => sum + item.messageCount, 0),
+    modelCount: new Set(items.flatMap((item) => item.models)).size,
+  };
+}
+
 export function SessionTable() {
   const { dirName } = useParams<{ dirName: string }>();
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
@@ -82,6 +104,7 @@ export function SessionTable() {
   const [sortKey, setSortKey] = useState<SortKey>("timestamp");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [page, setPage] = useState(0);
+  const [searchQuery, setSearchQuery] = useState("");
   const { selected, isSelected, toggleSelection, clearSelection, readyToCompare } = useCompare();
 
   const projectInfo = useMemo(
@@ -129,8 +152,26 @@ export function SessionTable() {
     return copy;
   }, [sessions, sortKey, sortDir]);
 
-  const totalPages = Math.ceil(sorted.length / PAGE_SIZE);
-  const pageData = sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+
+  const filteredSessions = useMemo(() => {
+    if (!normalizedSearch) return sorted;
+
+    return sorted.filter((session) => {
+      const base = session.filename.replace(/\.jsonl$/, "");
+      return [
+        session.filename,
+        base,
+        extractShortId(base),
+        session.timestamp,
+        ...session.models,
+      ].join("\n").toLowerCase().includes(normalizedSearch);
+    });
+  }, [sorted, normalizedSearch]);
+
+  useEffect(() => {
+    setPage(0);
+  }, [normalizedSearch]);
 
   function toggleSort(key: SortKey) {
     if (sortKey === key) {
@@ -155,18 +196,8 @@ export function SessionTable() {
     { key: "messageCount", label: "Msgs", cls: "num" },
   ];
 
-  const totals = useMemo(() => {
-    return {
-      inputTokens: sessions.reduce((sum, item) => sum + item.inputTokens, 0),
-      outputTokens: sessions.reduce((sum, item) => sum + item.outputTokens, 0),
-      cacheReadTokens: sessions.reduce((sum, item) => sum + item.cacheReadTokens, 0),
-      cacheWriteTokens: sessions.reduce((sum, item) => sum + item.cacheWriteTokens, 0),
-      totalCost: sessions.reduce((sum, item) => sum + item.totalCost, 0),
-      toolCalls: sessions.reduce((sum, item) => sum + item.toolCalls, 0),
-      messageCount: sessions.reduce((sum, item) => sum + item.messageCount, 0),
-      modelCount: new Set(sessions.flatMap((item) => item.models)).size,
-    };
-  }, [sessions]);
+  const totals = useMemo(() => accumulateTotals(sessions), [sessions]);
+  const filteredTotals = useMemo(() => accumulateTotals(filteredSessions), [filteredSessions]);
 
   const latestSession = useMemo(() => {
     return sessions.reduce<SessionMeta | null>((latest, session) => {
@@ -175,16 +206,21 @@ export function SessionTable() {
     }, null);
   }, [sessions]);
 
-  const rangeStart = sessions.length === 0 ? 0 : page * PAGE_SIZE + 1;
-  const rangeEnd = Math.min((page + 1) * PAGE_SIZE, sessions.length);
+  const totalPages = Math.ceil(filteredSessions.length / PAGE_SIZE);
+  const pageData = filteredSessions.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+
+  const rangeStart = filteredSessions.length === 0 ? 0 : page * PAGE_SIZE + 1;
+  const rangeEnd = Math.min((page + 1) * PAGE_SIZE, filteredSessions.length);
 
   const sessionSummary = loading
     ? "Loading project sessions…"
-    : sessions.length === 0
-      ? "No sessions"
-      : `${sessions.length} runs · ${totals.modelCount} models · ${formatTokens(
-          totals.inputTokens + totals.outputTokens,
-        )} tokens · $${totals.totalCost.toFixed(2)} total cost · ${totals.toolCalls} tool calls`;
+    : filteredSessions.length === 0
+      ? normalizedSearch
+        ? `No runs match “${searchQuery.trim()}”`
+        : "No sessions"
+      : `${normalizedSearch ? `${filteredSessions.length} of ${sessions.length}` : filteredSessions.length} runs · ${filteredTotals.modelCount} models · ${formatTokens(
+          filteredTotals.inputTokens + filteredTotals.outputTokens,
+        )} tokens · $${filteredTotals.totalCost.toFixed(2)} total cost · ${filteredTotals.toolCalls} tool calls`;
 
   return (
     <div className="container page-stack">
@@ -197,7 +233,9 @@ export function SessionTable() {
                 {projectInfo.title}
               </span>
               {!loading && !error && (
-                <span className="compact-chip mono-text">{sessions.length} runs</span>
+                <span className="compact-chip mono-text">
+                  {normalizedSearch ? `${filteredSessions.length}/${sessions.length} runs` : `${sessions.length} runs`}
+                </span>
               )}
             </div>
             <span className="compact-toolbar-sub mono-text" title={projectInfo.detail}>
@@ -277,6 +315,30 @@ export function SessionTable() {
             <div className="panel-title">Session index</div>
             <div className="table-panel-summary mono-text">{sessionSummary}</div>
           </div>
+
+          <div className="table-panel-tools">
+            <label className="search-field table-search">
+              <SearchIcon />
+              <input
+                className="search-input"
+                type="search"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search session id, filename, or model"
+                aria-label="Search sessions in this project"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  className="search-clear"
+                  onClick={() => setSearchQuery("")}
+                  aria-label="Clear session search"
+                >
+                  ×
+                </button>
+              )}
+            </label>
+          </div>
         </div>
 
         {loading && (
@@ -295,6 +357,10 @@ export function SessionTable() {
 
         {!loading && !error && sessions.length === 0 && (
           <div className="status-box">No sessions found for this project.</div>
+        )}
+
+        {!loading && !error && sessions.length > 0 && filteredSessions.length === 0 && (
+          <div className="status-box">No sessions match “{searchQuery.trim()}”.</div>
         )}
 
         {!loading && pageData.length > 0 && (
@@ -379,7 +445,7 @@ export function SessionTable() {
             {totalPages > 1 && (
               <div className="pagination">
                 <div className="pagination-summary">
-                  Page {page + 1} of {totalPages} ({rangeStart}–{rangeEnd} of {sessions.length})
+                  Page {page + 1} of {totalPages} ({rangeStart}–{rangeEnd} of {filteredSessions.length})
                 </div>
                 <div className="pagination-controls">
                   <button
