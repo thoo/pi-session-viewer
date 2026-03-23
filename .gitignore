@@ -1,0 +1,26 @@
+node_modules/
+dist/
+.cache/
+*.tsbuildinfo
+
+# Session data & export cache
+*.jsonl
+~/.pi-session-viewer-cache/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.*
+
+# Docs drafts
+/docs/export-theme-plan.md
+/docs/plan.md
